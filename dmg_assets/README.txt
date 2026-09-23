@@ -23,7 +23,7 @@
    - Connect your iPhone via USB cable and tap "Trust this Computer".
    - Open AirCard (the device status badge will turn green).
    - Click "Scan Cards".
-   - On your iPhone, double-click the Side button, pass Face ID, and tap your card.
+   - On your iPhone, double-click the Side button, complete any unlock prompt, and tap your card.
    - Assign a custom skin image (click or drag & drop onto the card).
    - Click "Flash Skins".
    - Force-close the Wallet app on your iPhone to see your new designs.

@@ -3,10 +3,10 @@
 ## Reproduction and cause
 
 An iPhone 15 Pro on iOS 18.6.2 connected successfully, but scanning found no cards
-after double-clicking the side button, authenticating with Face ID, and selecting
-cards. Comparing both log services during the same interaction showed that
-`com.apple.syslog_relay` omitted the card paths, while `com.apple.os_trace_relay`
-included them in multiline resource lookup messages.
+after opening Wallet and selecting cards on the unlocked iPhone. Comparing both
+log services during the same interaction showed that `com.apple.syslog_relay`
+omitted the card paths, while `com.apple.os_trace_relay` included them in
+multiline resource lookup messages.
 
 The native helper now requests the unified activity stream and decodes its
 framed records through the MobileDevice service connection. This keeps the app

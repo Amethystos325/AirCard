@@ -13,7 +13,7 @@
 ## Features
 - 🎨 **Custom Card Skins:** Assign custom artwork, textures, or bank logos to Apple Pay and Wallet cards.
 - ⚡ **Per-Card & Bulk Customization:** Set unique artwork for each card or apply one design across all cards with a single click.
-- 📱 **Zero-Hassle Card Detection:** Tap any card in your iPhone's Wallet app to detect its hash in real-time.
+- 📱 **Card Detection:** Select a card in your iPhone's Wallet app to identify its card identifier from Wallet resource paths.
 - 🚀 **100% Standalone (Universal):** Native support for both **Apple Silicon** and **Intel (x86)** Macs. All required device-communication utilities and image engines are pre-bundled inside the app.
 - 📦 **Zero Prerequisites:** No Homebrew, Python packages, or terminal setup required for macOS users.
 
@@ -42,21 +42,21 @@
 2. In AirCard, click **Scan Cards**.
 3. On your iPhone:
    - **Double-click the Side (Power) button** to open Apple Pay.
-   - Authenticate with **Face ID**.
-   - **Tap your card** (or tap it once more) to trigger instant detection!
+   - Complete any unlock prompt on your iPhone.
+   - **Tap your card** (or tap it once more) to trigger detection.
 4. Click on any card mockup or drag & drop an image directly onto the card.
 5. Click **Flash Skins**.
 6. Force-close the **Wallet** app on your iPhone from the App Switcher (or reboot) to see your new custom card design!
 
 ### Export card artwork
 
-Connect the iPhone and click **读取卡面** below a card to read and cache its
-current artwork. The preview appears on the card and remains available after
-restarting AirCard. Click **查看大图** to inspect the full-size cached image. A
+Connect the iPhone and click **读取卡面** below a card to copy and cache its
+current artwork files. The preview appears on the card and remains available
+after restarting AirCard. Click **查看大图** to inspect the full-size cached image. A
 skin selected for flashing is displayed separately from the cached artwork.
 
-Click **提取卡面** to save a ZIP. This also updates the cache and refreshes the
-preview. AirCard tries the card's three fixed face assets:
+Click **提取卡面** to save a ZIP of card artwork. This also updates the cache and
+refreshes the preview. AirCard tries the card's three fixed artwork assets:
 `cardBackgroundCombined@3x.png`, `cardBackgroundCombined@2x.png`, and
 `cardBackgroundCombined.pdf`. It tries each file independently and puts every
 successfully read file in the ZIP. The result lists files that were unavailable.
@@ -83,7 +83,8 @@ separate Recovery folder keeps the copies used to restore card resources.
 
 ### If scanning finds no cards
 
-The scanner uses the iPhone's unified log service, including Info/Debug events.
+The scanner uses the iPhone's unified log service, including Info/Debug events,
+to identify Wallet card-artwork resource paths.
 On iOS 18.6.2, the legacy log service can show Wallet activity while omitting the
 resource lookup messages that contain card identifiers.
 
