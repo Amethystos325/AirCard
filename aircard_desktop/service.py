@@ -53,6 +53,8 @@ class Server:
                                 if card in seen:
                                     continue
                                 seen.add(card)
+                                if self.engine.store.quarantined_card(device, card):
+                                    continue
                                 self.event({"event": "candidate", "card": card})
                                 # Classification uses the same lock and durable restore as reads.
                                 try:
@@ -62,6 +64,9 @@ class Server:
                                     await self.engine.operate(device, card, "classify")
                                 except Exception as error:
                                     self.event({"event": "scanError", "code": error_code(error)})
+                                    if self.engine.store.pending(device):
+                                        self.scan_stopping = True
+                                        return
         except asyncio.CancelledError:
             pass
         except Exception as error:
@@ -117,6 +122,7 @@ class Server:
         if method == "card.export":
             return self.engine.export(p["deviceKey"], p["card"], p["destination"])
         if method == "recovery.resume":
+            await self.stop_scan()
             return await self.engine.recover(p["operationId"])
         if method == "cancel":
             self.engine.cancel_requested = True

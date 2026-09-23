@@ -6,6 +6,7 @@ __pycache__/
 *~
 build/
 .tmp/
+.venv/
 *.dmg
 .serena/
 desktop/node_modules/
@@ -17,3 +18,4 @@ desktop/*.tsbuildinfo
 desktop/test-results/
 desktop/logs/
 *.spec
+!desktop/scripts/aircard-backend.macos.spec

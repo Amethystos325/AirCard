@@ -31,7 +31,7 @@ Tauri 2、React、TypeScript 和独立 Python 3.12 后端。原有 SwiftUI 应�
 - macOS arm64 / Intel 的工具链、原生 helper、Python 后端和 app / DMG 构建命令。
 - 两端开发调试、桌面冒烟、安装验收和常见构建问题。
 
-项目只在本地构建验证，不使用 GitHub Actions / CI。Windows 产物在 Windows 构建；Mac 产物在对应架构的 Mac 上构建。安装版包含 Python 后端，使用者无需安装开发工具；Mac 构建及真机流程在实际执行通过前仍标记为待验收。
+项目只在本地构建验证，不使用 GitHub Actions / CI。Windows 产物在 Windows 构建；Mac 产物在对应架构的 Mac 上构建。安装版包含 Python 后端，使用者无需安装开发工具。macOS 27 arm64 已完成本机构建、启动与设备自动发现；Intel 构建和 iPhone 卡片流程仍待验收。
 
 构建顺序为：安装锁定依赖 → macOS 构建 helper → 测试 → `pnpm package:backend` → `pnpm bundle`。macOS 最后一步需要添加 `--config src-tauri/tauri.macos.conf.json`。首次开发启动也先准备后端资源，并显式设置 `AIRCARD_PYTHON`，避免依赖原型的本机路径。
 
@@ -50,4 +50,4 @@ Tauri 2、React、TypeScript 和独立 Python 3.12 后端。原有 SwiftUI 应�
 
 自动化测试覆盖隔离、原有缺失文件、备份损坏、部分写入回滚、恢复续接、worker 超时/崩溃、分片和非法消息、重复请求、图片和界面交互。模拟器故障测试不通过中断真实卡片写入制造故障。
 
-Windows 真机记录见 `../docs/desktop-validation.md`。测试版未签名，不含自动更新。Mac 实机、无开发环境的独立 Windows 机器，以及各档高 DPI 的人工验收仍需对应环境，不能用构建成功替代。
+Windows 真机和 macOS arm64 本地启动记录见 `../docs/desktop-validation.md`。测试版未签名，不含自动更新。Mac 卡片操作、无开发环境的独立 Windows 机器，以及各档高 DPI 的人工验收仍需对应环境，不能用构建成功替代。

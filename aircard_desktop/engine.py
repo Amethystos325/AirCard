@@ -63,6 +63,8 @@ class Engine:
         async with self.lock:
             if self.store.pending(device):
                 raise RuntimeError("RECOVERY_REQUIRED")
+            if self.store.quarantined_card(device, card):
+                raise RuntimeError("CARD_QUARANTINED")
             card_dir = self.store.card(device, card)
             known = read(card_dir / "card.json", {})
             if mode in ("apply", "restore") and known.get("kind") != "secure-element":

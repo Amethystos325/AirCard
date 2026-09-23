@@ -107,6 +107,18 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.recover(state['id'])
         self.assertFalse(self.store.pending())
 
+    async def test_archived_unresolved_keeps_card_quarantined_without_blocking_other_cards(self):
+        state = {'id': 'a'*32, 'device': 'device-a', 'deviceKey': identity('device-a'), 'card': CARD,
+                 'mode': 'classify', 'status': 'archived_unresolved', 'originals': {}, 'writeStarted': False}
+        self.store.checkpoint(state)
+        self.assertFalse(self.store.pending('device-a'))
+        self.assertTrue(self.store.quarantined_card('device-a', CARD))
+        with self.assertRaisesRegex(RuntimeError, 'CARD_QUARANTINED'):
+            await self.engine.operate('device-a', CARD, 'classify')
+        other = 'B' * 27 + '='
+        self.assertFalse(self.store.quarantined_card('device-a', other))
+        await self.engine.operate('device-a', other, 'classify')
+
     async def test_busy_rejects_competing_operation(self):
         async with self.engine.lock:
             with self.assertRaisesRegex(RuntimeError, 'BUSY'):
@@ -151,6 +163,16 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
         job['assets'][1][1] += '/../unrelated'
         with self.assertRaises(ValueError): validate(job)
 
+    def test_recovery_worker_accepts_only_the_pending_asset(self):
+        token = 'a' * 32
+        link = f'aircard-probe-{token}-link-0'
+        recovered = f'aircard-probe-{token}-recovered-0'
+        job = {'card': CARD, 'area': 'pkpass', 'leaf': 'pass.json', 'token': token,
+               'direction': 'recover', 'assets': [[f'../../{link}/pass.json', recovered]]}
+        validate(job)
+        job['assets'].append(['../../unrelated/pass.json', 'unrelated'])
+        with self.assertRaises(ValueError): validate(job)
+
     async def test_pending_remote_copy_must_match_saved_checksum(self):
         from aircard_desktop.storage import sha
         session = Session(self.store, {'id': 'b'*32, 'card': CARD, 'device': 'device-a'})
@@ -183,6 +205,68 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
         session.transfer = AsyncMock()
         await session.recover_pending()
         session.transfer.assert_awaited_once_with('pkpass', 'cardBackgroundCombined@2x.png', 'push', b'blue-before-restore')
+        self.assertIsNone(session.journal['pending'])
+
+    async def test_uncertain_pull_replays_existing_sync_once_and_keeps_recovery(self):
+        token = 'd' * 32
+        source, link, recovered = (f'aircard-probe-{token}-{kind}-0' for kind in ('source', 'link', 'recovered'))
+        state = {'id': 'e' * 32, 'card': CARD, 'device': 'device-a', 'writeStarted': False}
+        session = Session(self.store, state)
+        session.snapshot = {}
+        session.runtime = None
+        session.journal = {'roots': [source, link, recovered],
+                           'identifiers': [f'../../{source}/p0/p1/p2/link', f'../../{link}/pass.json'],
+                           'pending': {'area': 'pkpass', 'leaf': 'pass.json', 'recovered': recovered}}
+        session.afc = AsyncMock()
+        session.afc.exists.side_effect = lambda path: path != recovered
+        session.afc.stat.return_value = {'st_ifmt': 'S_IFLNK'}
+
+        async def remote_bytes(_afc, path, *_args):
+            return b'aircard-desktop-staging' if path == source + '/payload' else b'canary'
+
+        with patch('aircard_desktop.transport.bounded_file', remote_bytes), \
+             patch('aircard_desktop.transport.canary_books', return_value=b'canary'), \
+             patch('aircard_desktop.transport.native', AsyncMock()) as replay:
+            with self.assertRaisesRegex(RuntimeError, 'RECOVERY_INDETERMINATE'):
+                await session.recover_pending()
+            with self.assertRaisesRegex(RuntimeError, 'RECOVERY_INDETERMINATE'):
+                await session.recover_pending()
+        replay.assert_awaited_once()
+        self.assertEqual(replay.await_args.args[0]['assets'], [[f'../../{link}/pass.json', recovered]])
+        self.assertEqual(replay.await_args.args[0]['direction'], 'recover')
+        self.assertTrue(session.journal['pending']['replayAttempted'])
+        self.assertEqual(read(session.directory / 'journal.json')['pending'], session.journal['pending'])
+
+    async def test_uncertain_pull_replay_can_restore_a_late_copy(self):
+        token = 'f' * 32
+        source, link, recovered = (f'aircard-probe-{token}-{kind}-0' for kind in ('source', 'link', 'recovered'))
+        state = {'id': '1' * 32, 'card': CARD, 'device': 'device-a', 'writeStarted': False}
+        session = Session(self.store, state)
+        session.snapshot = {}
+        session.runtime = None
+        session.journal = {'roots': [source, link, recovered],
+                           'identifiers': [f'../../{source}/p0/p1/p2/link', f'../../{link}/pass.json'],
+                           'pending': {'area': 'pkpass', 'leaf': 'pass.json', 'recovered': recovered}}
+        session.afc = AsyncMock()
+        moved = False
+        session.afc.exists.side_effect = lambda path: moved if path == recovered else True
+        session.afc.stat.return_value = {'st_ifmt': 'S_IFLNK'}
+        session.transfer = AsyncMock()
+
+        async def remote_bytes(_afc, path, *_args):
+            if path == source + '/payload': return b'aircard-desktop-staging'
+            if path == 'Books/Sync/Books.plist': return b'canary'
+            return b'original'
+
+        async def replay(_job, _directory):
+            nonlocal moved
+            moved = True
+
+        with patch('aircard_desktop.transport.bounded_file', remote_bytes), \
+             patch('aircard_desktop.transport.canary_books', return_value=b'canary'), \
+             patch('aircard_desktop.transport.native', replay):
+            await session.recover_pending()
+        session.transfer.assert_awaited_once_with('pkpass', 'pass.json', 'push', b'original')
         self.assertIsNone(session.journal['pending'])
 
     async def test_worker_crash_has_stable_error_and_retains_no_job(self):

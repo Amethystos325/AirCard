@@ -1,6 +1,6 @@
 # AirCard Desktop：依赖与双端本地构建
 
-本文适用于 `desktop/` 下的 Tauri 2 + React + TypeScript + Python 桌面客户端。所有测试、打包和安装验收均在本地完成，不使用 GitHub Actions / CI。Windows 已完成本机构建和 Suica 真机验证；macOS 构建与真机验收仍待在对应 Mac 上执行，详见[验证记录](desktop-validation.md)。
+本文适用于 `desktop/` 下的 Tauri 2 + React + TypeScript + Python 桌面客户端。所有测试、打包和安装验收均在本地完成，不使用 GitHub Actions / CI。Windows 已完成本机构建和 Suica 真机验证；macOS 27 arm64 已完成本机构建、启动与设备自动发现，Intel 构建和 iPhone 卡片流程仍待执行，详见[验证记录](desktop-validation.md)。
 
 ## 运行安装版需要什么
 
@@ -136,7 +136,7 @@ unset VITE_E2E AIRCARD_DATA_DIR
 pnpm bundle --config src-tauri/tauri.macos.conf.json
 ```
 
-`make all` 当前生成 Universal 的 `build/device_helper`、`build/airtraffic_host`，并进行本地 ad-hoc 签名。Tauri 后端打包脚本会将 `airtraffic_host` 收入冻结程序；桌面 app 和 Python 后端仍按本机架构生成。这里不包含公开发行签名或公证。
+`make all` 当前生成最低系统版本 14.0 的 Universal `build/device_helper`、`build/airtraffic_host`，并进行本地 ad-hoc 签名。Tauri 后端打包脚本会在 PyInstaller 完成后原样复制 `airtraffic_host`，保留其系统 Framework 链接；桌面 app 和 Python 后端仍按本机架构生成。这里不包含公开发行签名或公证。
 
 产物：`desktop/src-tauri/target/release/bundle/macos/` 下的 `.app`，以及 `desktop/src-tauri/target/release/bundle/dmg/` 下的 `.dmg`。从 DMG 安装 app 后再验收。开发调试同样在设置 `AIRCARD_PYTHON`、构建 helper 和打包后端之后，于 `desktop/` 执行 `pnpm dev`。
 

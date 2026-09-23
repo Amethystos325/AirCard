@@ -30,10 +30,10 @@ def validate(job):
     if not re.fullmatch(r"[0-9a-f]{32}", token):
         raise ValueError("INVALID_JOB")
     source, link, recovered = (f"aircard-probe-{token}-{kind}-0" for kind in ("source", "link", "recovered"))
-    expected = [[f"../../{source}/p0/p1/p2/link", link]]
+    expected = [] if job["direction"] == "recover" else [[f"../../{source}/p0/p1/p2/link", link]]
     if job["direction"] == "push":
         expected.append([f"../../{source}/payload", link + "/" + job["leaf"]])
-    elif job["direction"] == "pull":
+    elif job["direction"] in ("pull", "recover"):
         expected.append([f"../../{link}/{job['leaf']}", recovered])
     else:
         raise ValueError("INVALID_JOB")

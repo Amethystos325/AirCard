@@ -70,8 +70,12 @@ class Store:
         return [read(p) for p in (self.root / "transactions").glob("*/state.json")]
 
     def pending(self, device: str | None = None):
-        return [s for s in self.transactions() if s["status"] not in ("complete", "rolled_back")
+        return [s for s in self.transactions() if s["status"] not in ("complete", "rolled_back", "archived_unresolved")
                 and (device is None or s["deviceKey"] == identity(device))]
+
+    def quarantined_card(self, device: str, card: str) -> bool:
+        return any(s["status"] == "archived_unresolved" and s["deviceKey"] == identity(device)
+                   and s["card"] == card for s in self.transactions())
 
     def checkpoint(self, state):
         save(self.root / "transactions" / state["id"] / "state.json", state)

@@ -27,7 +27,8 @@ The new `desktop/` application uses Tauri 2, React, TypeScript and a bundled
 Python backend. It includes bilingual UI, image cropping, per-device backups,
 transaction recovery and Windows NSIS packaging. A real Suica completed the
 Windows backup → replace → restore cycle; the user confirmed both artwork
-changes in Wallet. macOS builds and device acceptance are still pending.
+changes in Wallet. The macOS arm64 app and DMG have been built and launched;
+card operations on macOS and Intel builds are still pending validation.
 Windows users need **Windows 11 x64**, **WebView2 Runtime**, and the verified
 **Microsoft Store version of iTunes** for USB device communication. Python,
 Node.js, Rust and Visual Studio are not required to run the installer. Apple DLLs

@@ -56,8 +56,19 @@ UI 复刻版安装包：`build/AirCardDesktop-0.2.0-windows-x64-ui.exe`。
 
 SHA-256：`1cf8d835653672e1ef3e517bb16a7b623ef78293814531a7176e1201e3ce1e7d`。原 `build/AirCardDesktop-0.2.0-windows-x64.exe` 保留；构建目录下的 NSIS 产物已更新为本次 UI 版本。
 
+## macOS 本地构建与界面验证（2026-09-24）
+
+- 基于 `255bb35` 及本轮 Mac 打包修复，在 macOS 27.0 arm64、Xcode 27、Python 3.12.14、Rust 1.98.1 上完成原生 helper、冻结后端和 Tauri release 构建，生成 `.app` 与 `.dmg`。
+- 后端运行 71 项测试（70 项通过、1 项跳过）；前端 8 项测试通过，TypeScript / Vite 生产构建通过。冻结后端的 `hello`、`shutdown` 协议通过；包内 `airtraffic_host` 直接执行正常返回参数错误，签名有效，系统 Framework 链接未被改写。
+- 从 `.app` 实际启动，确认空状态、顶栏、底栏和状态提示显示；最终构建自动发现已连接的 iPhone。切换简体中文与深色主题正常。对照原 SwiftUI 应用窗口及合成卡片预览，卡片大小、网格、胶囊状态和卡片内按钮的布局基本一致；macOS 标题栏已隐藏标题文字。
+- 修复 PyInstaller 收集系统私有 Framework 导致的 arm64 切片错误及 helper 链接改写；两个 Universal helper 的最低 macOS 版本现为 14.0。
+- 设备自动发现和扫描已执行。扫描中的 `pass.json` 读取未能取得预期的恢复副本，因此无法确认原文件位置；这不等于已证实手机原文件缺失。Books 中的临时同步条目已按原快照恢复，没有开始写入卡面。用户目视检查 Wallet 未见异常后，将此次未解决的事务归档，保留完整本地恢复数据和设备暂存；对应卡片继续隔离，其他卡片可以扫描。此处不将真机卡片流程标记为通过。
+- 新增一次性恢复重试及扫描遇到待恢复事务时自动停止的处理。归档后再次构建并启动 `.app`，待恢复提示已消失，其他卡片扫描入口可用；未安装到另一台 Mac，macOS 14 到 26 的实际运行也尚未验证。
+
+产物：`desktop/src-tauri/target/release/bundle/dmg/AirCard Desktop_0.2.0_aarch64.dmg`。SHA-256：`95d2d24683169060ad43a3794fd66dcd93877acafbea2e5821b8da605056b12c`；`hdiutil verify` 通过。本地测试包未做发行签名或公证。
+
 ## 待对应环境验收
 
-- macOS 14+ arm64、x64 构建及真实设备流程。
+- macOS 14 到 26 的实际运行、Intel x64 构建及 iPhone 真机流程。
 - 无 Python 开发环境的另一台 Windows 11 机器。
 - Windows 各档高 DPI、Retina 的人工操作检查。

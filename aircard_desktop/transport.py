@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import plistlib
+import re
 import secrets
 import sys
 from pathlib import Path
@@ -221,6 +222,8 @@ class Session:
         if not pending:
             return
         path = pending["recovered"]
+        if not await self.afc.exists(path) and not pending.get("sha256") and not self.state.get("writeStarted"):
+            await self.retry_pending_pull(pending)
         if await self.afc.exists(path):
             data = await bounded_file(self.afc, path, 32 * 1024 * 1024)
         elif pending.get("sha256"):
@@ -245,6 +248,41 @@ class Session:
         await self.transfer(pending["area"], pending["leaf"], "push", data)
         self.journal["pending"] = None
         self.checkpoint()
+
+    async def retry_pending_pull(self, pending):
+        # A pull can finish without a recovered file or a reliable missing-file
+        # trace. Replay its existing sync entry once; never assume absence means
+        # the original is safe to discard.
+        if pending.get("replayAttempted"):
+            return
+        roots = self.journal.get("roots", [])
+        identifiers = self.journal.get("identifiers", [])
+        if len(roots) < 3 or len(identifiers) < 2:
+            raise RuntimeError("RECOVERY_INDETERMINATE")
+        source, link, recovered = roots[-3:]
+        match = re.fullmatch(r"aircard-probe-([0-9a-f]{32})-source-0", source)
+        if not match or link != f"aircard-probe-{match[1]}-link-0" or recovered != pending["recovered"]:
+            raise RuntimeError("RECOVERY_INDETERMINATE")
+        token = match[1]
+        area, leaf = pending["area"], pending["leaf"]
+        target(self.state["card"], area, leaf)
+        assets = [[f"../../{source}/p0/p1/p2/link", link], [f"../../{link}/{leaf}", recovered]]
+        if identifiers[-2:] != [pair[0] for pair in assets]:
+            raise RuntimeError("RECOVERY_INDETERMINATE")
+        if not await self.afc.exists(link) or (await self.afc.stat(link)).get("st_ifmt") != "S_IFLNK":
+            raise RuntimeError("RECOVERY_INDETERMINATE")
+        if await bounded_file(self.afc, source + "/payload") != b"aircard-desktop-staging":
+            raise RuntimeError("RECOVERY_INDETERMINATE")
+        if await bounded_file(self.afc, "Books/Sync/Books.plist") != canary_books(self.directory, self.snapshot, identifiers):
+            raise RuntimeError("RECOVERY_INDETERMINATE")
+        pending["replayAttempted"] = True
+        self.checkpoint()
+        # The first sync asset already moved the nested link into place. Only
+        # the second asset is safe to request again.
+        retry_assets = [assets[1]]
+        await native(self.job(card=self.state["card"], area=area, leaf=leaf, token=token,
+                              direction="recover", assets=retry_assets), self.directory)
+        await asyncio.sleep(.25)
 
     async def finish(self):
         if self.journal.get("pending"):
