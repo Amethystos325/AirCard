@@ -10,7 +10,7 @@ from aircard import CARD_REGEXES
 from windows_probe import select_device, trace_frame, trace_text
 from .engine import Engine
 from .transport import device_info
-from .worker import CARD
+from .worker import SCANNED_CARD
 
 
 class Server:
@@ -48,7 +48,7 @@ class Server:
                                 if self.scan_stopping:
                                     return
                                 card = match.group(1)
-                                if not CARD.fullmatch(card):
+                                if not SCANNED_CARD.fullmatch(card):
                                     continue
                                 if card in seen:
                                     continue
@@ -126,6 +126,9 @@ class Server:
         if method == "recovery.resume":
             await self.stop_scan()
             return await self.engine.recover(p["operationId"])
+        if method == "recovery.isolate":
+            await self.stop_scan()
+            return await self.engine.isolate_unresolved(p["operationId"])
         if method == "cancel":
             self.engine.cancel_requested = True
             return {"requested": True}

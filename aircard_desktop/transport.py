@@ -222,6 +222,18 @@ class Session:
         if not pending:
             return
         path = pending["recovered"]
+        if (self.state.get("mode") == "classify" and not self.state.get("writeStarted")
+                and re.fullmatch(r"aircard-export-probe-[0-9a-f]{12}", self.state["card"])
+                and pending.get("area") == "pkpass" and pending.get("leaf") == "pass.json"
+                and not pending.get("sha256") and not (self.directory / "pending.bin").exists()
+                and self.journal.get("roots", [])[-1:] == [path]
+                and not await self.afc.exists(path)):
+            # An older scanner accepted this known app-generated probe path as
+            # a card ID. It has no Wallet pass.json to restore. Finish below
+            # still restores Books and removes only our temporary probe roots.
+            self.journal["pending"] = None
+            self.checkpoint()
+            return
         if not await self.afc.exists(path) and not pending.get("sha256") and not self.state.get("writeStarted"):
             await self.retry_pending_pull(pending)
         if await self.afc.exists(path):
@@ -293,4 +305,18 @@ class Session:
         if not await books_match(self.afc, self.directory, self.snapshot):
             raise RuntimeError("BOOKS_RESTORE_FAILED")
         self.journal["complete"] = True
+        self.checkpoint()
+
+    async def isolate_unresolved(self):
+        """Restore Books while retaining an unverified card move for later recovery."""
+        pending = self.journal.get("pending")
+        if (self.state.get("writeStarted") or not pending or not pending.get("replayAttempted")
+                or pending.get("sha256") or await self.afc.exists(pending["recovered"])):
+            raise RuntimeError("RECOVERY_REQUIRED")
+        # No card file is discarded. The unresolved device staging roots and
+        # journal remain available if a later recovery can find the original.
+        await restore_books(self.afc, self.directory, self.snapshot)
+        if not await books_match(self.afc, self.directory, self.snapshot):
+            raise RuntimeError("BOOKS_RESTORE_FAILED")
+        self.journal["booksRestoredForUnresolved"] = True
         self.checkpoint()

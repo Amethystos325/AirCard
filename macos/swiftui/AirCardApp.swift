@@ -739,6 +739,10 @@ struct ContentView: View {
                     recoveryBanner(recovery)
                     Divider()
                 }
+                ForEach(vm.unresolved) { recovery in
+                    unresolvedBanner(recovery)
+                    Divider()
+                }
                 if vm.device != nil && vm.device?.compatible == false {
                     Text(vm.t("当前 iOS build 尚未验证，卡片操作已暂停。", "This iOS build is not verified. Card operations are paused."))
                         .font(.caption).foregroundStyle(.orange)
@@ -1021,6 +1025,29 @@ struct ContentView: View {
             }
             Spacer()
             Button(vm.t("继续恢复", "Continue recovery")) { vm.resumeRecovery(item) }
+                .disabled(vm.isFlashing || vm.device?.key != item.deviceKey)
+            if item.canIsolate {
+                Button(vm.t("隔离此卡", "Isolate this card")) { vm.isolateRecovery(item) }
+                    .disabled(vm.isFlashing || vm.device?.key != item.deviceKey)
+            }
+        }
+        .padding(.horizontal, 20).padding(.vertical, 8)
+        .background(Color.orange.opacity(0.1))
+    }
+
+    private func unresolvedBanner(_ item: RecoveryItem) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.shield.fill").foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(vm.t("卡片 \(String(item.card.prefix(7))) 的原文件位置仍未确认",
+                          "Card \(String(item.card.prefix(7))) has an unverified original file"))
+                    .font(.caption.weight(.semibold))
+                Text(vm.t("已恢复 Books 并保留恢复资料；此卡暂停操作，其他卡可扫描。",
+                          "Books was restored and recovery data retained. This card is paused; other cards can be scanned."))
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(vm.t("重新检查", "Check again")) { vm.resumeRecovery(item) }
                 .disabled(vm.isFlashing || vm.device?.key != item.deviceKey)
         }
         .padding(.horizontal, 20).padding(.vertical, 8)

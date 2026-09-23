@@ -10,7 +10,7 @@ from PIL import Image
 from aircard_desktop.engine import Engine
 from aircard_desktop.storage import Store, read, save, identity
 from aircard_desktop.service import Server
-from aircard_desktop.worker import validate, target, ART, CACHE
+from aircard_desktop.worker import validate, target, ART, CACHE, SCANNED_CARD
 from aircard_desktop.images import prepare
 from aircard_desktop.transport import Session, native
 
@@ -107,6 +107,34 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.recover(state['id'])
         self.assertFalse(self.store.pending())
 
+    async def test_unresolved_prewrite_can_be_isolated_without_losing_recovery_record(self):
+        class IsolatingSession(MemorySession):
+            isolated = False
+            async def isolate_unresolved(inner):
+                type(inner).isolated = True
+        state = {'id': 'a'*32, 'device': 'device-a', 'deviceKey': identity('device-a'), 'card': CARD,
+                 'mode': 'classify', 'status': 'needs_recovery', 'originals': {}, 'writeStarted': False}
+        self.store.checkpoint(state)
+        save(self.root / 'transactions' / state['id'] / 'transport' / 'journal.json',
+             {'pending': {'replayAttempted': True}})
+        self.engine.session_type = IsolatingSession
+        self.assertTrue(self.engine.overview()['pending'][0]['canIsolate'])
+        await self.engine.isolate_unresolved(state['id'])
+        self.assertTrue(IsolatingSession.isolated)
+        self.assertFalse(self.store.pending())
+        self.assertTrue(self.store.quarantined_card('device-a', CARD))
+        self.assertEqual(len(self.engine.overview()['unresolved']), 1)
+        self.assertEqual(read(self.root / 'transactions' / state['id'] / 'transport' / 'journal.json')['pending'],
+                         {'replayAttempted': True})
+
+    async def test_started_write_cannot_be_isolated(self):
+        state = {'id': 'a'*32, 'device': 'device-a', 'deviceKey': identity('device-a'), 'card': CARD,
+                 'mode': 'apply', 'status': 'needs_recovery', 'originals': {}, 'writeStarted': True}
+        self.store.checkpoint(state)
+        with self.assertRaisesRegex(RuntimeError, 'RECOVERY_REQUIRED'):
+            await self.engine.isolate_unresolved(state['id'])
+        self.assertEqual(self.store.pending()[0]['id'], state['id'])
+
     async def test_archived_unresolved_keeps_card_quarantined_without_blocking_other_cards(self):
         state = {'id': 'a'*32, 'device': 'device-a', 'deviceKey': identity('device-a'), 'card': CARD,
                  'mode': 'classify', 'status': 'archived_unresolved', 'originals': {}, 'writeStarted': False}
@@ -171,6 +199,10 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
         validate(job)
         job['assets'][1][1] += '/../unrelated'
         with self.assertRaises(ValueError): validate(job)
+
+    def test_scanner_rejects_its_own_probe_paths(self):
+        self.assertTrue(SCANNED_CARD.fullmatch(CARD))
+        self.assertFalse(SCANNED_CARD.fullmatch('aircard-export-probe-b379e736c430'))
 
     def test_recovery_worker_accepts_only_the_pending_asset(self):
         token = 'a' * 32
@@ -277,6 +309,34 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
             await session.recover_pending()
         session.transfer.assert_awaited_once_with('pkpass', 'pass.json', 'push', b'original')
         self.assertIsNone(session.journal['pending'])
+
+    async def test_isolation_restores_books_but_keeps_staging_and_pending_copy(self):
+        state = {'id': 'a'*32, 'card': CARD, 'device': 'device-a', 'writeStarted': False}
+        session = Session(self.store, state)
+        session.snapshot = {'files': {}, 'directories': {}}
+        session.journal['pending'] = {'area': 'pkpass', 'leaf': 'pass.json', 'recovered': 'retained',
+                                      'replayAttempted': True}
+        session.afc = AsyncMock()
+        session.afc.exists.return_value = False
+        with patch('aircard_desktop.transport.restore_books', AsyncMock()) as restore, \
+             patch('aircard_desktop.transport.books_match', AsyncMock(return_value=True)):
+            await session.isolate_unresolved()
+        restore.assert_awaited_once()
+        self.assertIsNotNone(session.journal['pending'])
+        self.assertTrue(read(session.directory / 'journal.json')['booksRestoredForUnresolved'])
+
+    async def test_known_export_probe_does_not_leave_recovery_pending(self):
+        state = {'id': 'a'*32, 'card': 'aircard-export-probe-b379e736c430',
+                 'device': 'device-a', 'mode': 'classify', 'writeStarted': False}
+        session = Session(self.store, state)
+        session.journal['roots'] = ['source', 'link', 'missing']
+        session.journal['pending'] = {'area': 'pkpass', 'leaf': 'pass.json', 'recovered': 'missing'}
+        session.afc = AsyncMock()
+        session.afc.exists.return_value = False
+        session.transfer = AsyncMock()
+        await session.recover_pending()
+        self.assertIsNone(session.journal['pending'])
+        session.transfer.assert_not_awaited()
 
     async def test_worker_crash_has_stable_error_and_retains_no_job(self):
         process = AsyncMock(); process.returncode = 5

@@ -34,7 +34,17 @@ class Engine:
             card["backup"] = (path.parent / "original" / "manifest.json").is_file()
             card["preview"] = self.preview(path.parent / "preview.png")
             cards.append(card)
-        return {"cards": cards, "pending": [{k: s[k] for k in ("id", "deviceKey", "card", "status")} for s in self.store.pending()],
+        pending = []
+        for state in self.store.pending():
+            row = {k: state[k] for k in ("id", "deviceKey", "card", "status")}
+            journal = read(self.store.root / "transactions" / state["id"] / "transport" / "journal.json", {})
+            entry = journal.get("pending") or {}
+            row["canIsolate"] = bool(not state.get("writeStarted") and entry.get("replayAttempted")
+                                     and not entry.get("sha256"))
+            pending.append(row)
+        unresolved = [{k: s[k] for k in ("id", "deviceKey", "card", "status")}
+                      for s in self.store.transactions() if s["status"] == "archived_unresolved"]
+        return {"cards": cards, "pending": pending, "unresolved": unresolved,
                 "active": {k: self.active[k] for k in ("id", "deviceKey", "card", "mode")} if self.active else None}
 
     @staticmethod
@@ -199,6 +209,28 @@ class Engine:
                     state["status"] = "rolled_back"
                     self.store.checkpoint(state)
                     return {"recovered": True}
+                finally:
+                    self.active = None
+                    self.emit({"event": "changed"})
+
+    async def isolate_unresolved(self, operation_id):
+        if self.lock.locked():
+            raise RuntimeError("BUSY")
+        if len(operation_id) != 32 or any(c not in "0123456789abcdef" for c in operation_id):
+            raise ValueError("INVALID_REQUEST")
+        async with self.lock:
+            with self.store.operation_lock():
+                state = read(self.store.root / "transactions" / operation_id / "state.json")
+                if not state or state["status"] != "needs_recovery" or state.get("writeStarted"):
+                    raise RuntimeError("RECOVERY_REQUIRED")
+                self.active = state
+                try:
+                    self.progress("recovering")
+                    async with self.session_type(self.store, state) as session:
+                        await session.isolate_unresolved()
+                    state["status"] = "archived_unresolved"
+                    self.store.checkpoint(state)
+                    return {"isolated": True}
                 finally:
                     self.active = None
                     self.emit({"event": "changed"})

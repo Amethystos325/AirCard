@@ -7,6 +7,9 @@ import sys
 from pathlib import Path
 
 CARD = re.compile(r"[-A-Za-z0-9_+=]{20,64}\Z")
+# Wallet card hashes observed by the scanner are padded 28-character IDs.
+# A broad path regex can also match our own temporary probe directory names.
+SCANNED_CARD = re.compile(r"[A-Za-z0-9+/_-]{27}=\Z")
 ART = {"cardBackgroundCombined@3x.png", "cardBackgroundCombined@2x.png", "cardBackgroundCombined.pdf"}
 CACHE = {"FrontFace", "PlaceHolder", "Preview"}
 

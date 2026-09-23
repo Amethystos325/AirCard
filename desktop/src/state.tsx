@@ -3,18 +3,19 @@ import { request, subscribe } from './bridge';
 import { en, zh, type Key } from './i18n';
 export type Card = { card: string; deviceKey: string; label: string; kind: string; preview?: string; backup: boolean };
 export type Device = { id: string; key: string; name: string; product: string; version: string; build: string; compatible: boolean };
-export type State = { cards: Card[]; pending: { id: string; deviceKey: string; card: string }[]; device?: Device; busy: boolean; scanning: boolean; stage: string; error?: string; logs: string[]; language: 'zh' | 'en'; theme: string };
-export const initial: State = { cards: [], pending: [], busy: false, scanning: false, stage: 'ready', logs: [], language: (localStorage.getItem('language') || (navigator.language.startsWith('zh') ? 'zh' : 'en')) as 'zh' | 'en', theme: localStorage.getItem('theme') || 'system' };
+export type Recovery = { id: string; deviceKey: string; card: string; canIsolate?: boolean };
+export type State = { cards: Card[]; pending: Recovery[]; unresolved: Recovery[]; device?: Device; busy: boolean; scanning: boolean; stage: string; error?: string; logs: string[]; language: 'zh' | 'en'; theme: string };
+export const initial: State = { cards: [], pending: [], unresolved: [], busy: false, scanning: false, stage: 'ready', logs: [], language: (localStorage.getItem('language') || (navigator.language.startsWith('zh') ? 'zh' : 'en')) as 'zh' | 'en', theme: localStorage.getItem('theme') || 'system' };
 type Action = { type: 'patch'; value: Partial<State> } | { type: 'stage'; value: string };
 export function reducer(state: State, action: Action): State { return action.type === 'patch' ? { ...state, ...action.value } : { ...state, stage: action.value, logs: [...state.logs.slice(-99), action.value] }; }
 const Context = createContext<{ state: State; dispatch: React.Dispatch<Action>; run: (method: string, params?: Record<string, unknown>) => Promise<any>; t: (key: string) => string }>(null!);
 export function Provider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initial);
   const t = (key: string) => (state.language === 'zh' ? zh : en)[key as Key] || (state.language === 'zh' ? zh : en).OPERATION_FAILED;
-  async function refresh() { const data = await request('overview'); dispatch({ type: 'patch', value: { cards: data.cards, pending: data.pending, busy: !!data.active, scanning: !!data.scanning } }); }
+  async function refresh() { const data = await request('overview'); dispatch({ type: 'patch', value: { cards: data.cards, pending: data.pending, unresolved: data.unresolved || [], busy: !!data.active, scanning: !!data.scanning } }); }
   async function run(method: string, params: Record<string, unknown> = {}) {
     dispatch({ type: 'patch', value: { error: undefined } });
-    const operation = method.startsWith('card.') && method !== 'card.export' || method === 'recovery.resume';
+    const operation = method.startsWith('card.') && method !== 'card.export' || method.startsWith('recovery.');
     if (operation) dispatch({ type: 'patch', value: { busy: true } });
     try {
       const result = await request(method, params);
@@ -38,7 +39,7 @@ export function Provider({ children }: { children: ReactNode }) {
       if (message.event === 'scanError' || message.event === 'fatal') dispatch({ type: 'patch', value: { error: message.code, busy: false } });
       if (message.event === 'closing') { dispatch({ type: 'stage', value: 'closing' }); dispatch({ type: 'patch', value: { busy: true } }); }
     });
-    void request('hello').then(data => dispatch({ type: 'patch', value: { cards: data.cards, pending: data.pending, busy: !!data.active, scanning: !!data.scanning } })).catch(() => dispatch({ type: 'patch', value: { error: 'BACKEND_OFFLINE' } }));
+    void request('hello').then(data => dispatch({ type: 'patch', value: { cards: data.cards, pending: data.pending, unresolved: data.unresolved || [], busy: !!data.active, scanning: !!data.scanning } })).catch(() => dispatch({ type: 'patch', value: { error: 'BACKEND_OFFLINE' } }));
     void run('device');
     return unsubscribe;
   }, []);

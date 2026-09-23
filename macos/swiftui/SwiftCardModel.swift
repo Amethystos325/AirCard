@@ -16,6 +16,7 @@ struct RecoveryItem: Identifiable {
     let id: String
     let deviceKey: String
     let card: String
+    let canIsolate: Bool
 }
 
 struct CardItem: Identifiable, Hashable {
@@ -40,6 +41,7 @@ final class AppViewModel: ObservableObject {
     @Published var device: DeviceInfo?
     @Published var cards: [CardItem] = []
     @Published var pending: [RecoveryItem] = []
+    @Published var unresolved: [RecoveryItem] = []
     @Published var isCheckingDevice = false
     @Published var isScanningCards = false
     @Published var isClassifyingCard = false
@@ -128,7 +130,13 @@ final class AppViewModel: ObservableObject {
             pending = (overview["pending"] as? [[String: Any]] ?? []).compactMap { row in
                 guard let id = row["id"] as? String, let key = row["deviceKey"] as? String,
                       let card = row["card"] as? String else { return nil }
-                return RecoveryItem(id: id, deviceKey: key, card: card)
+                return RecoveryItem(id: id, deviceKey: key, card: card,
+                                    canIsolate: row["canIsolate"] as? Bool ?? false)
+            }
+            unresolved = (overview["unresolved"] as? [[String: Any]] ?? []).compactMap { row in
+                guard let id = row["id"] as? String, let key = row["deviceKey"] as? String,
+                      let card = row["card"] as? String else { return nil }
+                return RecoveryItem(id: id, deviceKey: key, card: card, canIsolate: false)
             }
             isScanningCards = overview["scanning"] as? Bool ?? isScanningCards
         } catch { report(error) }
@@ -301,6 +309,22 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    func isolateRecovery(_ item: RecoveryItem) {
+        guard !isFlashing && item.canIsolate && device?.key == item.deviceKey else { return }
+        isFlashing = true
+        showLogs = true
+        Task {
+            defer { isFlashing = false }
+            do {
+                _ = try await bridge.request("recovery.isolate", ["operationId": item.id])
+                await refresh()
+                statusText = t("已恢复 Books；此卡仍待人工核查，其他卡可继续使用。",
+                               "Books restored. This card still needs review; other cards are available.")
+                log(statusText)
+            } catch { await refresh(); report(error) }
+        }
+    }
+
     func cancelCurrentOperation() {
         Task { _ = try? await bridge.request("cancel") }
         statusText = t("将在当前安全步骤结束后停止…", "Stopping after the current safe step…")
@@ -349,7 +373,9 @@ final class AppViewModel: ObservableObject {
             "IMAGE_TOO_LARGE": ("图片超过 32 MB 或四千万像素。", "Image exceeds 32 MB or 40 megapixels."),
             "INVALID_CROP": ("裁剪范围超出了图片。", "Crop is outside the image."),
             "WRITE_NOT_VERIFIED": ("新卡面未通过回读校验，请检查恢复状态。", "Artwork write did not verify. Check recovery."),
-            "READ_INDETERMINATE": ("未能确认原文件位置，恢复资料已保留。", "Original file location is uncertain; recovery data was kept.")]
+            "READ_INDETERMINATE": ("未能确认原文件位置，恢复资料已保留。", "Original file location is uncertain; recovery data was kept."),
+            "RECOVERY_INDETERMINATE": ("仍无法确认原文件位置。可隔离此卡，恢复其他卡片的操作。",
+                                        "The original file location is still uncertain. Isolate this card to continue with other cards.")]
         let pair = names[code]
         return t(pair?.0 ?? "操作失败（\(code)）。请查看日志和恢复状态。",
                  pair?.1 ?? "Operation failed (\(code)). Check logs and recovery status.")
