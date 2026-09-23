@@ -48,6 +48,39 @@
 5. Click **Flash Skins**.
 6. Force-close the **Wallet** app on your iPhone from the App Switcher (or reboot) to see your new custom card design!
 
+### Export card artwork
+
+Connect the iPhone and click **读取卡面** below a card to read and cache its
+current artwork. The preview appears on the card and remains available after
+restarting AirCard. Click **查看大图** to inspect the full-size cached image. A
+skin selected for flashing is displayed separately from the cached artwork.
+
+Click **提取卡面** to save a ZIP. This also updates the cache and refreshes the
+preview. AirCard tries the card's three fixed face assets:
+`cardBackgroundCombined@3x.png`, `cardBackgroundCombined@2x.png`, and
+`cardBackgroundCombined.pdf`. It tries each file independently and puts every
+successfully read file in the ZIP. The result lists files that were unavailable.
+An export fails if none can be read, or if writeback or recovery checks fail.
+File signatures are reported as a warning rather than blocking byte-for-byte
+exports.
+These are the files currently on the iPhone; if a skin was already applied,
+they may no longer be the card's factory artwork. Export before applying a skin
+to save the earlier design.
+
+AirTraffic moves each original file temporarily during reading. AirCard saves a
+checked copy in `~/Library/Application Support/AirCard/Recovery/` and writes a
+copy back to the card. Depending on the device, an extra original may remain
+in the iPhone's Media recovery area. The recovery record reports whether it
+was retained and records SHA-256 for each Mac backup. Keep the Mac recovery
+folder, and any retained iPhone copies, until you have checked the card in
+Wallet. AirTraffic can report a successful operation even when a device file
+did not move; a successful export cannot guarantee Wallet will display the
+same artwork without checking it on the iPhone.
+
+The UI cache is stored under `~/Library/Application Support/AirCard/ArtworkCache/`.
+Its files are checked against their saved SHA-256 hashes before display; the
+separate Recovery folder keeps the copies used to restore card resources.
+
 ### If scanning finds no cards
 
 The scanner uses the iPhone's unified log service, including Info/Debug events.

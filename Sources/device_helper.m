@@ -705,6 +705,13 @@ static BOOL IsSafeRelativePath(NSString *path) {
     return YES;
 }
 
+static NSDictionary *AFCInspectPath(AFCConnectionRef afc, NSString *path) {
+    NSString *kind = AFCFileKind(afc, path);
+    if (!kind) return @{ @"ok": @NO, @"error": @"path unavailable" };
+    return @{ @"ok": @YES, @"kind": kind,
+              @"size": @(AFCFileSize(afc, path)) };
+}
+
 static BOOL IsLowercaseHex(NSString *value, NSUInteger length) {
     if (value.length != length) return NO;
     for (NSUInteger index = 0; index < value.length; index++) {
@@ -731,6 +738,64 @@ static BOOL GeneratedNamesMatch(NSString *source,
             isEqualToString:token] &&
         [GeneratedToken(recovered, AIRLIFT_RECOVERED_PREFIX)
             isEqualToString:token];
+}
+
+static BOOL RemoveGeneratedTree(AFCConnectionRef afc,
+                                NSString *path,
+                                NSUInteger depth);
+
+static NSDictionary *FinishExport(AFCConnectionRef afc,
+                                  NSArray<NSString *> *args) {
+    NSString *source = args[0];
+    NSString *linkDestination = args[1];
+    NSString *recovered = args[2];
+    NSString *snapshotRoot = args[3];
+    if (!GeneratedNamesMatch(source, linkDestination, recovered) ||
+        !LoadBooksSnapshot(snapshotRoot))
+        return @{ @"ok": @NO, @"error": @"invalid export state" };
+    // Never remove a recovered original. It may be the only device copy.
+    if (AFCExists(afc, recovered))
+        return @{ @"ok": @NO, @"error": @"card still in recovery staging" };
+    NSMutableArray<NSString *> *failures = NSMutableArray.array;
+    if (!RemoveIfPresent(afc, linkDestination))
+        [failures addObject:@"relocated link"];
+    if (!RemoveGeneratedTree(afc, source, 0))
+        [failures addObject:@"StreamingZip tree"];
+    NSDictionary *booksRestore = RestoreBooksState(afc, snapshotRoot);
+    if (![booksRestore[@"ok"] boolValue]) [failures addObject:@"Books preimage"];
+    return @{ @"ok": @(failures.count == 0),
+              @"failures": failures,
+              @"booksRestore": booksRestore };
+}
+
+static NSDictionary *FinishExportPreserving(AFCConnectionRef afc,
+                                            NSArray<NSString *> *args) {
+    NSString *source = args[0];
+    NSString *linkDestination = args[1];
+    NSString *recovered = args[2];
+    NSString *snapshotRoot = args[3];
+    if (!GeneratedNamesMatch(source, linkDestination, recovered) ||
+        !LoadBooksSnapshot(snapshotRoot))
+        return @{ @"ok": @NO, @"error": @"invalid export state" };
+    NSDictionary *before = AFCInspectPath(afc, recovered);
+    if (![before[@"ok"] boolValue] ||
+        ![before[@"kind"] isEqual:@"S_IFREG"])
+        return @{ @"ok": @NO, @"error": @"recovered original unavailable" };
+    NSMutableArray<NSString *> *failures = NSMutableArray.array;
+    if (!RemoveIfPresent(afc, linkDestination))
+        [failures addObject:@"relocated link"];
+    if (!RemoveGeneratedTree(afc, source, 0))
+        [failures addObject:@"StreamingZip tree"];
+    NSDictionary *booksRestore = RestoreBooksState(afc, snapshotRoot);
+    if (![booksRestore[@"ok"] boolValue]) [failures addObject:@"Books preimage"];
+    NSDictionary *after = AFCInspectPath(afc, recovered);
+    if (![after[@"kind"] isEqual:@"S_IFREG"] ||
+        ![after[@"size"] isEqual:before[@"size"]])
+        [failures addObject:@"recovered original changed"];
+    return @{ @"ok": @(failures.count == 0),
+              @"failures": failures,
+              @"booksRestore": booksRestore,
+              @"recovered": after };
 }
 
 static BOOL IsCanaryLeaf(NSString *leaf) {
@@ -1159,6 +1224,25 @@ int main(int argc, const char *argv[]) {
                                    @"size": @(data.length),
                                    @"path": mediaPath };
                 }
+            } else if ([command isEqual:@"afc-stat"] && argc == 4) {
+                NSString *mediaPath = [NSString stringWithUTF8String:argv[3]];
+                operation = IsSafeRelativePath(mediaPath)
+                    ? AFCInspectPath(session.afc, mediaPath)
+                    : @{ @"ok": @NO, @"error": @"unsafe media path" };
+            } else if ([command isEqual:@"finish-export"] && argc == 7) {
+                operation = FinishExport(session.afc, @[
+                    [NSString stringWithUTF8String:argv[3]],
+                    [NSString stringWithUTF8String:argv[4]],
+                    [NSString stringWithUTF8String:argv[5]],
+                    [NSString stringWithUTF8String:argv[6]],
+                ]);
+            } else if ([command isEqual:@"finish-export-preserve"] && argc == 7) {
+                operation = FinishExportPreserving(session.afc, @[
+                    [NSString stringWithUTF8String:argv[3]],
+                    [NSString stringWithUTF8String:argv[4]],
+                    [NSString stringWithUTF8String:argv[5]],
+                    [NSString stringWithUTF8String:argv[6]],
+                ]);
             }
         }
 

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import PDFKit
 import UniformTypeIdentifiers
 
 // MARK: - Models
@@ -19,13 +20,19 @@ struct CardItem: Identifiable, Hashable {
     var isSelected: Bool = true
     var customImageURL: URL? = nil
     var customImage: NSImage? = nil
+    var cachedArtworkURL: URL? = nil
+    var cachedArtwork: NSImage? = nil
+    var cachedAssetNames: [String] = []
     
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
     
     static func == (lhs: CardItem, rhs: CardItem) -> Bool {
-        lhs.id == rhs.id && lhs.isSelected == rhs.isSelected && lhs.customImageURL == rhs.customImageURL
+        lhs.id == rhs.id && lhs.isSelected == rhs.isSelected &&
+        lhs.customImageURL == rhs.customImageURL &&
+        lhs.cachedArtworkURL == rhs.cachedArtworkURL &&
+        lhs.cachedAssetNames == rhs.cachedAssetNames
     }
 }
 
@@ -44,6 +51,11 @@ class AppViewModel: ObservableObject {
     @Published var logs: [String] = []
     @Published var showSuccessAlert = false
     @Published var errorMessage: String?
+    @Published var isExporting = false
+    @Published var isReadingArtwork = false
+    @Published var exportingCardID: String?
+    @Published var readingCardID: String?
+    @Published var exportMessage: String?
     
     @Published var showAddCardSheet = false
     @Published var manualHashInput = ""
@@ -72,6 +84,7 @@ class AppViewModel: ObservableObject {
         }
         
         loadSavedCards()
+        loadCachedArtworks()
         checkDevice()
     }
     
@@ -221,6 +234,66 @@ class AppViewModel: ObservableObject {
             try? data.write(to: URL(fileURLWithPath: jsonPath), options: .atomic)
         }
     }
+
+    private func applyCachedArtwork(_ info: [String: Any], to cardHash: String) {
+        guard let index = cards.firstIndex(where: { $0.id == cardHash }),
+              let files = info["files"] as? [String: String],
+              let names = info["assets"] as? [String] else { return }
+        let preferred = ["cardBackgroundCombined@3x.png",
+                         "cardBackgroundCombined@2x.png",
+                         "cardBackgroundCombined.pdf"]
+        for name in preferred {
+            guard let path = files[name] else { continue }
+            let url = URL(fileURLWithPath: path)
+            let image: NSImage?
+            if url.pathExtension.lowercased() == "pdf" {
+                image = PDFDocument(url: url)?.page(at: 0)?.thumbnail(
+                    of: CGSize(width: 1536, height: 969), for: .mediaBox)
+            } else {
+                image = NSImage(contentsOf: url)
+            }
+            if let image {
+                cards[index].cachedArtworkURL = url
+                cards[index].cachedArtwork = image
+                cards[index].cachedAssetNames = names
+                return
+            }
+        }
+        log("Cached files for \(cardHash.prefix(12)) could not be displayed as an image.")
+    }
+
+    func loadCachedArtworks() {
+        let hashes = cards.map(\.id)
+        guard !hashes.isEmpty,
+              let input = try? JSONSerialization.data(withJSONObject: hashes),
+              let json = String(data: input, encoding: .utf8) else { return }
+        let scriptDir = self.scriptDir
+        Task.detached {
+            let process = Process()
+            process.executableURL = AppViewModel.pythonExecutableURL
+            process.environment = AppViewModel.processEnvironment
+            process.currentDirectoryURL = URL(fileURLWithPath: scriptDir)
+            process.arguments = ["aircard_backend.py", "--cached-cards", json]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = Pipe()
+            do {
+                try process.run()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                guard process.terminationStatus == 0,
+                      let result = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let found = result["cards"] as? [String: [String: Any]] else { return }
+                await MainActor.run {
+                    for (hash, info) in found {
+                        self.applyCachedArtwork(info, to: hash)
+                    }
+                }
+            } catch {
+                await MainActor.run { self.log("Could not load cached artwork: \(error.localizedDescription)") }
+            }
+        }
+    }
     
     func addCardHash(_ raw: String) {
         let components = raw.components(separatedBy: CharacterSet(charactersIn: " \n\r\t,;"))
@@ -235,6 +308,7 @@ class AppViewModel: ObservableObject {
         }
         if addedCount > 0 {
             saveCards()
+            loadCachedArtworks()
         }
     }
     
@@ -478,12 +552,95 @@ class AppViewModel: ObservableObject {
             statusText = "Ready"
         }
         saveCards()
+        loadCachedArtworks()
         log("Scanning stopped. Total cards: \(cards.count).")
     }
     
     // MARK: - Skin Application
+
+    func exportCard(_ cardHash: String, to output: URL) {
+        performArtworkOperation(cardHash, output: output)
+    }
+
+    func readCardArtwork(_ cardHash: String) {
+        performArtworkOperation(cardHash, output: nil)
+    }
+
+    private func performArtworkOperation(_ cardHash: String, output: URL?) {
+        guard let udid = device?.udid else {
+            exportMessage = "请先连接 iPhone。"
+            return
+        }
+        guard !isExporting && !isReadingArtwork && !isFlashing else { return }
+        let isExport = output != nil
+        isExporting = isExport
+        isReadingArtwork = !isExport
+        exportingCardID = isExport ? cardHash : nil
+        readingCardID = isExport ? nil : cardHash
+        showLogs = true
+        statusText = isExport ? "正在提取卡面…" : "正在读取卡面…"
+        log(statusText)
+        let scriptDir = self.scriptDir
+        Task.detached {
+            let process = Process()
+            process.executableURL = AppViewModel.pythonExecutableURL
+            process.environment = AppViewModel.processEnvironment
+            process.currentDirectoryURL = URL(fileURLWithPath: scriptDir)
+            if let output {
+                process.arguments = ["aircard_backend.py", "--export-card", udid, cardHash, output.path]
+            } else {
+                process.arguments = ["aircard_backend.py", "--read-card", udid, cardHash]
+            }
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = Pipe()
+            do {
+                try process.run()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                let lines = (String(data: data, encoding: .utf8) ?? "").split(separator: "\n")
+                let result = lines.reversed().compactMap { line -> [String: Any]? in
+                    guard let bytes = String(line).data(using: .utf8) else { return nil }
+                    return try? JSONSerialization.jsonObject(with: bytes) as? [String: Any]
+                }.first
+                let succeeded = process.terminationStatus == 0 && (result?["ok"] as? Bool == true)
+                let message = (result?["message"] as? String) ?? "卡面操作失败，请查看日志。"
+                await MainActor.run {
+                    self.isExporting = false
+                    self.isReadingArtwork = false
+                    self.exportingCardID = nil
+                    self.readingCardID = nil
+                    self.statusText = succeeded ? (isExport ? "卡面导出成功。" : "卡面读取成功。") : "卡面操作失败。"
+                    self.log(message)
+                    if let recovery = result?["recovery"] as? String {
+                        self.log("Recovery copies: \(recovery)")
+                    }
+                    if succeeded, let cache = result?["cache"] as? [String: Any] {
+                        self.applyCachedArtwork(cache, to: cardHash)
+                    }
+                    if succeeded, let output {
+                        let cacheWarning = (result?["cacheError"] as? String).map { "\n缓存未更新：\($0)" } ?? ""
+                        self.exportMessage = "\(message)\n\n已保存至 \(output.path)\(cacheWarning)"
+                    } else {
+                        self.exportMessage = message
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.isExporting = false
+                    self.isReadingArtwork = false
+                    self.exportingCardID = nil
+                    self.readingCardID = nil
+                    self.statusText = "卡面操作失败。"
+                    self.exportMessage = "无法启动卡面操作：\(error.localizedDescription)"
+                    self.log(self.exportMessage ?? "卡面操作失败")
+                }
+            }
+        }
+    }
     
     func applySkin() {
+        guard !isExporting && !isReadingArtwork && !isFlashing else { return }
         guard let udid = device?.udid else {
             errorMessage = "No iPhone connected."
             return
@@ -650,7 +807,13 @@ struct WalletCardView: View {
     let cardIndex: Int
     let onPickImage: () -> Void
     let onClearImage: () -> Void
+    let onRead: () -> Void
+    let onExport: () -> Void
+    let onViewCached: () -> Void
     let onDelete: () -> Void
+    let exportDisabled: Bool
+    let isExporting: Bool
+    let isReading: Bool
     
     @State private var isHovered = false
     @State private var isTargeted = false
@@ -707,6 +870,21 @@ struct WalletCardView: View {
                                 .padding(.bottom, 12)
                             }
                         }
+                    }
+                } else if let cached = card.cachedArtwork {
+                    ZStack(alignment: .topLeading) {
+                        Image(nsImage: cached)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 290, height: 182)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        Text("已缓存卡面")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(.ultraThinMaterial)
+                            .clipShape(Capsule())
+                            .padding(10)
                     }
                 } else {
                     // Empty / Placeholder Card Mockup
@@ -850,7 +1028,7 @@ struct WalletCardView: View {
                 .cornerRadius(6)
                 
                 Spacer()
-                
+
                 // Status badge
                 if card.customImage != nil {
                     Image(systemName: "checkmark.circle.fill")
@@ -869,6 +1047,50 @@ struct WalletCardView: View {
                 .help("Remove from list")
             }
             .padding(.horizontal, 4)
+
+            if let cached = card.cachedArtwork {
+                HStack(spacing: 8) {
+                    Image(nsImage: cached)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 48, height: 32)
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("当前卡面缓存")
+                            .font(.caption.weight(.semibold))
+                        Text("\(card.cachedAssetNames.count) 个文件")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button("查看大图", action: onViewCached)
+                        .buttonStyle(.link)
+                        .font(.caption)
+                }
+                .padding(6)
+                .background(Color(NSColor.windowBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
+            HStack(spacing: 8) {
+                Button(action: onRead) {
+                    Label(isReading ? "正在读取…" : "读取卡面",
+                          systemImage: isReading ? "hourglass" : "arrow.down.circle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(exportDisabled)
+                .help("从 iPhone 读取卡面并缓存到本机")
+
+                Button(action: onExport) {
+                    Label(isExporting ? "正在提取…" : "提取卡面",
+                          systemImage: "square.and.arrow.down.on.square")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(exportDisabled)
+                .help("将读取到的卡面文件导出为 ZIP，并刷新本机缓存")
+            }
         }
         .padding(10)
         .background(
@@ -884,9 +1106,86 @@ struct WalletCardView: View {
 
 // MARK: - Main UI View
 
+private struct CachedArtworkPreview: Identifiable {
+    let id = UUID()
+    let url: URL
+    let cardLabel: String
+}
+
+private struct CachedPDFView: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        view.document = PDFDocument(url: url)
+        return view
+    }
+
+    func updateNSView(_ view: PDFView, context: Context) {
+        if view.document?.documentURL != url {
+            view.document = PDFDocument(url: url)
+        }
+    }
+}
+
+private struct CachedArtworkViewer: View {
+    let item: CachedArtworkPreview
+    @State private var zoom = 1.0
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("缓存卡面大图").font(.headline)
+                    Text("\(item.cardLabel) · \(item.url.lastPathComponent)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Button("在访达中显示") {
+                    NSWorkspace.shared.activateFileViewerSelecting([item.url])
+                }
+            }
+            if item.url.pathExtension.lowercased() == "pdf" {
+                CachedPDFView(url: item.url)
+            } else if let image = NSImage(contentsOf: item.url) {
+                GeometryReader { geometry in
+                    let imageWidth = max(image.size.width, 1)
+                    let imageHeight = max(image.size.height, 1)
+                    let fit = min(geometry.size.width / imageWidth,
+                                  geometry.size.height / imageHeight, 1)
+                    ScrollView([.horizontal, .vertical]) {
+                        Image(nsImage: image)
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: imageWidth * fit * zoom,
+                                   height: imageHeight * fit * zoom)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+                HStack {
+                    Text("缩放")
+                    Slider(value: $zoom, in: 0.5...4)
+                    Text("\(Int(zoom * 100))%")
+                        .monospacedDigit()
+                        .frame(width: 50, alignment: .trailing)
+                }
+            } else {
+                Text("无法显示缓存图片")
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .padding(18)
+        .frame(minWidth: 900, minHeight: 650)
+    }
+}
+
 struct ContentView: View {
     @StateObject private var vm = AppViewModel()
     @State private var showCredits = false
+    @State private var artworkPreview: CachedArtworkPreview?
     
     private var readyToFlashCount: Int {
         vm.cards.filter { $0.isSelected && $0.customImageURL != nil }.count
@@ -933,7 +1232,19 @@ struct ContentView: View {
                                 cardIndex: idx,
                                 onPickImage: { openCardImagePicker(for: vm.cards[idx].id) },
                                 onClearImage: { vm.clearCardImage(for: vm.cards[idx].id) },
-                                onDelete: { vm.deleteCard(id: vm.cards[idx].id) }
+                                onRead: { vm.readCardArtwork(vm.cards[idx].id) },
+                                onExport: { exportCardArtwork(for: vm.cards[idx].id) },
+                                onViewCached: {
+                                    if let url = vm.cards[idx].cachedArtworkURL {
+                                        artworkPreview = CachedArtworkPreview(
+                                            url: url,
+                                            cardLabel: "卡片 #\(idx + 1)")
+                                    }
+                                },
+                                onDelete: { vm.deleteCard(id: vm.cards[idx].id) },
+                                exportDisabled: vm.device?.connected != true || vm.isExporting || vm.isReadingArtwork || vm.isFlashing,
+                                isExporting: vm.exportingCardID == vm.cards[idx].id,
+                                isReading: vm.readingCardID == vm.cards[idx].id
                             )
                         }
                     }
@@ -962,11 +1273,22 @@ struct ContentView: View {
         } message: {
             Text("Skins successfully applied to all selected cards!\n\nPlease force-close the Wallet app on your iPhone (or reboot) to see your new designs.")
         }
+        .alert("卡面操作", isPresented: Binding(
+            get: { vm.exportMessage != nil },
+            set: { if !$0 { vm.exportMessage = nil } }
+        )) {
+            Button("OK") { vm.exportMessage = nil }
+        } message: {
+            Text(vm.exportMessage ?? "")
+        }
         .sheet(isPresented: $showCredits) {
             creditsSheet
         }
         .sheet(isPresented: $vm.showAddCardSheet) {
             addCardSheet
+        }
+        .sheet(item: $artworkPreview) { item in
+            CachedArtworkViewer(item: item)
         }
     }
     
@@ -1311,7 +1633,7 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
                 .controlSize(.regular)
-                .disabled(readyToFlashCount == 0 || vm.isFlashing || vm.device?.connected != true)
+                .disabled(readyToFlashCount == 0 || vm.isFlashing || vm.isExporting || vm.isReadingArtwork || vm.device?.connected != true)
             }
             
             // Subtle Footer Credits
@@ -1445,6 +1767,16 @@ struct ContentView: View {
         panel.message = "Choose a custom skin for card \(cardId.prefix(12))..."
         if panel.runModal() == .OK, let url = panel.url {
             vm.setCardImage(for: cardId, url: url)
+        }
+    }
+
+    private func exportCardArtwork(for cardId: String) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.zip]
+        panel.nameFieldStringValue = "AirCard-\(cardId.prefix(12)).zip"
+        panel.message = "保存这张卡当前的两张 PNG 卡面和一份 PDF。"
+        if panel.runModal() == .OK, let url = panel.url {
+            vm.exportCard(cardId, to: url)
         }
     }
     

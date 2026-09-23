@@ -274,10 +274,8 @@ def read_file(udid: str, target: str, leaf: str, retries: int = 1) -> "bytes | N
                 )
                 if restored and operation_ok(finish):
                     return data
-                # Bytes were still captured; return them so caller can save
-                # a backup copy even if cleanup reported incomplete.
-                if data:
-                    return data
+                # A read is not verified if its own writeback or Books cleanup
+                # failed. The exporter retains separate Mac/device originals.
                 return None
         except Exception:
             pass

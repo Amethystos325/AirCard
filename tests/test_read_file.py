@@ -70,6 +70,19 @@ class ReadFileTests(unittest.TestCase):
         mock_write.assert_not_called()
         self.assertNotIn("finish-write", calls)
 
+    def test_writeback_failure_is_not_reported_as_verified_read(self) -> None:
+        def fake_native(command, _udid, *args):
+            if command == "afc-read":
+                Path(args[1]).write_bytes(b"copy")
+            return _ok()
+
+        with (
+            patch.object(apply_card_skin, "native", side_effect=fake_native),
+            patch.object(apply_card_skin, "run_json", return_value={"exitCode": 0, "ok": True}),
+            patch.object(apply_card_skin, "write_file", return_value=False),
+        ):
+            self.assertIsNone(apply_card_skin.read_file("udid", "/var/tmp", "leaf.bin"))
+
 
 if __name__ == "__main__":
     unittest.main()

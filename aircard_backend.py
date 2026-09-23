@@ -43,6 +43,8 @@ from apply_card_skin import (
     remove_files,
 )
 from card_assets import CACHE_FILES, build_card_assets
+from card_export import export_card
+from card_cache import get_cached_card, save_cached_card
 from aircard import (
     find_device_helper,
     get_connected_device,
@@ -216,6 +218,63 @@ def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
     return True
 
 
+def cmd_export_card(udid: str, card_hash: str, output_path: str) -> bool:
+    try:
+        result = export_card(udid, card_hash, Path(output_path).expanduser())
+        try:
+            cached = save_cached_card(card_hash, result)
+            cache_error = None
+        except (OSError, ValueError) as error:
+            cached = None
+            cache_error = str(error)
+        print(json.dumps({"ok": True, "type": "success", "message": "卡面导出成功。",
+                          "output": output_path, "recovery": str(result.recovery),
+                          "cache": cached, "cacheError": cache_error,
+                          "exported": result.exported,
+                          "unavailable": result.unavailable,
+                          "unrecognized": result.unrecognized}, ensure_ascii=False))
+        return True
+    except Exception as error:
+        print(json.dumps({"ok": False, "type": "error", "message":
+                          f"Export failed: {error}. Check the AirCard Recovery folder "
+                          "before trying again."}))
+        return False
+
+
+def cmd_read_card(udid: str, card_hash: str) -> bool:
+    try:
+        result = export_card(udid, card_hash, None)
+        cached = save_cached_card(card_hash, result)
+        print(json.dumps({"ok": True, "type": "success", "message": "卡面读取成功。",
+                          "cache": cached, "recovery": str(result.recovery),
+                          "exported": result.exported}, ensure_ascii=False))
+        return True
+    except Exception as error:
+        print(json.dumps({"ok": False, "type": "error", "message":
+                          f"卡面读取失败：{error}"}, ensure_ascii=False))
+        return False
+
+
+def cmd_cached_cards(hashes_json: str) -> None:
+    try:
+        hashes = json.loads(hashes_json)
+        if not isinstance(hashes, list):
+            raise ValueError("Expected a list of card hashes")
+        cards = {}
+        for card_hash in hashes:
+            if not isinstance(card_hash, str):
+                continue
+            try:
+                cached = get_cached_card(card_hash)
+            except ValueError:
+                cached = None
+            if cached is not None:
+                cards[card_hash] = cached
+        print(json.dumps({"ok": True, "cards": cards}, ensure_ascii=False))
+    except (ValueError, json.JSONDecodeError) as error:
+        print(json.dumps({"ok": False, "error": str(error)}))
+
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({"error": "No command provided"}))
@@ -234,6 +293,14 @@ def main():
     elif norm_cmd == "flash" and len(sys.argv) > 4:
         if not cmd_flash(sys.argv[2], sys.argv[3], sys.argv[4]):
             sys.exit(1)
+    elif norm_cmd == "export-card" and len(sys.argv) > 4:
+        if not cmd_export_card(sys.argv[2], sys.argv[3], sys.argv[4]):
+            sys.exit(1)
+    elif norm_cmd == "read-card" and len(sys.argv) > 3:
+        if not cmd_read_card(sys.argv[2], sys.argv[3]):
+            sys.exit(1)
+    elif norm_cmd == "cached-cards" and len(sys.argv) > 2:
+        cmd_cached_cards(sys.argv[2])
     else:
         print(json.dumps({"error": f"Unknown command: {cmd}"}))
         sys.exit(1)
