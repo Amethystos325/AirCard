@@ -1,4 +1,4 @@
-# AirCard 🎴
+# AirCard Lite 🎴
 
 > **Apple Wallet Card Skinner for iOS 18+ (No Jailbreak Required)**
 > **Tested on iOS 27 release.**
@@ -12,7 +12,7 @@
 
 ## Features
 - 🎨 **Custom Card Skins:** Assign custom artwork, textures, or bank logos to Apple Pay and Wallet cards.
-- ⚡ **Per-Card & Bulk Customization:** Set unique artwork for each card or apply one design across all cards with a single click.
+- ⚡ **Per-Card Customization:** Set and flash unique artwork for each card individually.
 - 📱 **Card Detection:** Select a card in your iPhone's Wallet app to identify its card identifier from Wallet resource paths.
 - 🚀 **100% Standalone (Universal):** Native support for both **Apple Silicon** and **Intel (x86)** Macs. All required device-communication utilities and image engines are pre-bundled inside the app.
 - 📦 **Zero Prerequisites:** No Homebrew, Python packages, or terminal setup required for macOS users.
@@ -44,9 +44,16 @@
    - **Double-click the Side (Power) button** to open Apple Pay.
    - Complete any unlock prompt on your iPhone.
    - **Tap your card** (or tap it once more) to trigger detection.
-4. Click on any card mockup or drag & drop an image directly onto the card.
-5. Click **Flash Skins**.
-6. Force-close the **Wallet** app on your iPhone from the App Switcher (or reboot) to see your new custom card design!
+4. Click **更换卡面** below a card and choose an image, or drag & drop an image onto it. AirCard Lite flashes that card automatically.
+5. Force-close the **Wallet** app on your iPhone from the App Switcher (or reboot) to see your new custom card design!
+
+The scanner verifies each detected pass by reading its `pass.json`. It adds
+payment cards and Secure Element transit cards with `paymentCard` or
+`transitCard` metadata, and skips ordinary store cards, coupons, tickets, and
+other barcode passes. If the type cannot be verified, it is not added. Saved
+cards from older versions are checked and ordinary passes are removed when you
+start a scan. Verification takes longer than log detection because each file is
+backed up and restored on the device.
 
 ### Read & export card artwork
 
@@ -57,11 +64,17 @@ skin selected for flashing is displayed separately from the cached artwork.
 
 Once a card has been read, the **export** button (arrow-up icon) becomes
 available: it saves a ZIP of every cached artwork file straight from the local
-cache, without contacting the device again. AirCard reads the card's three fixed
-artwork assets:
-`cardBackgroundCombined@3x.png`, `cardBackgroundCombined@2x.png`, and
-`cardBackgroundCombined.pdf`. It tries each file independently and puts every
-successfully read file in the ZIP. The result lists files that were unavailable.
+cache, without contacting the device again. AirCard first reads the pass
+`manifest.json` to find its actual image files. It supports Apple's documented
+PNG resources (`artwork`, `strip`, `background`, `thumbnail`, `logo`,
+`primaryLogo`, `secondaryLogo`, `footer`, and `icon`), plus other safely named PNG
+resources listed in the manifest, including 1x/2x/3x and localized `.lproj`
+variants. If no usable manifest is available, it falls back
+to the existing combined artwork files: `cardBackgroundCombined@3x.png`,
+`cardBackgroundCombined@2x.png`, and `cardBackgroundCombined.pdf`. It puts every
+successfully read image in the ZIP with its relative path preserved. A component
+image is shown as a source image, not a reconstruction of the complete Wallet
+pass. The result lists files that were unavailable.
 An export fails if none can be read, or if writeback or recovery checks fail.
 File signatures are reported as a warning rather than blocking byte-for-byte
 exports.

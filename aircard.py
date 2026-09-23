@@ -37,6 +37,7 @@ from apply_card_skin import (
     ROOT,
     DEVICE_HELPER,
 )
+from card_export import classify_card
 
 TARGET_ASSETS = [
     "cardBackgroundCombined@3x.png",
@@ -237,7 +238,18 @@ def capture_card_hashes(udid: str, existing_cards: list[str] | None = None) -> l
         process.terminate()
         process.wait()
 
-    res = list(found_hashes)
+    res = list(existing_cards or [])
+    for card_hash in sorted(found_hashes - set(res)):
+        try:
+            kind, _recovery = classify_card(udid, card_hash)
+        except Exception as error:
+            print(f"  Could not verify {card_hash[:12]}: {error}")
+            continue
+        if kind == "secure-element":
+            res.append(card_hash)
+            print(f"  ✓ Secure Element card: {card_hash[:12]}")
+        else:
+            print(f"  Skipped {card_hash[:12]} ({kind})")
     save_cards(res)
     return res
 

@@ -1,5 +1,5 @@
 ============================================================
-              AirCard · Quick Start Guide
+              AirCard Lite · Quick Start Guide
 ============================================================
 
 1. INSTALLATION:
@@ -24,8 +24,7 @@
    - Open AirCard (the device status badge will turn green).
    - Click "Scan Cards".
    - On your iPhone, double-click the Side button, complete any unlock prompt, and tap your card.
-   - Assign a custom skin image (click or drag & drop onto the card).
-   - Click "Flash Skins".
+   - Choose a custom skin image for a card, or drag & drop one onto it. The card flashes automatically.
    - Force-close the Wallet app on your iPhone to see your new designs.
 
 ============================================================

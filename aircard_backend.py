@@ -43,7 +43,7 @@ from apply_card_skin import (
     remove_files,
 )
 from card_assets import CACHE_FILES, build_card_assets
-from card_export import export_card
+from card_export import classify_card, export_card
 from card_cache import get_cached_card, save_cached_card
 from aircard import (
     find_device_helper,
@@ -255,6 +255,16 @@ def cmd_read_card(udid: str, card_hash: str) -> bool:
         return False
 
 
+def cmd_classify_card(udid: str, card_hash: str) -> bool:
+    try:
+        kind, recovery = classify_card(udid, card_hash)
+        print(json.dumps({"ok": True, "kind": kind, "recovery": str(recovery)}))
+        return True
+    except Exception as error:
+        print(json.dumps({"ok": False, "kind": "unknown", "message": str(error)}))
+        return False
+
+
 def cmd_cached_cards(hashes_json: str) -> None:
     try:
         hashes = json.loads(hashes_json)
@@ -298,6 +308,9 @@ def main():
             sys.exit(1)
     elif norm_cmd == "read-card" and len(sys.argv) > 3:
         if not cmd_read_card(sys.argv[2], sys.argv[3]):
+            sys.exit(1)
+    elif norm_cmd == "classify-card" and len(sys.argv) > 3:
+        if not cmd_classify_card(sys.argv[2], sys.argv[3]):
             sys.exit(1)
     elif norm_cmd == "cached-cards" and len(sys.argv) > 2:
         cmd_cached_cards(sys.argv[2])

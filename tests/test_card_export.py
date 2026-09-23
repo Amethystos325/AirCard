@@ -1,5 +1,6 @@
 """Export safety checks with device operations simulated."""
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -22,6 +23,68 @@ def ok(**operation):
 
 
 class ExportTests(unittest.TestCase):
+    def test_classifies_secure_element_and_ordinary_passes(self):
+        cases = (
+            ({"paymentCard": {}}, "secure-element"),
+            ({"paymentCard": {}, "transitCard": {}}, "secure-element"),
+            ({"storeCard": {}}, "ordinary"),
+            ({"coupon": {}}, "ordinary"),
+            ({"generic": {}}, "ordinary"),
+            ({"boardingPass": {}}, "ordinary"),
+            ({"eventTicket": {}}, "ordinary"),
+            ({"description": "unknown"}, "unknown"),
+        )
+        for document, kind in cases:
+            with self.subTest(document=document):
+                self.assertEqual(card_export.classify_pass_data(json.dumps(document).encode()), kind)
+
+    def test_classification_reads_only_pass_metadata(self):
+        with tempfile.TemporaryDirectory() as temp:
+            def fake_one(_udid, _target, name, _directory, _state):
+                self.assertEqual(name, "pass.json")
+                return json.dumps({"paymentCard": {}}).encode()
+            with patch.object(card_export, "_export_one", side_effect=fake_one):
+                kind, recovery = card_export.classify_card("device", HASH, Path(temp))
+            self.assertEqual(kind, "secure-element")
+            state = json.loads((recovery / "state.json").read_text())
+            self.assertEqual(state["classification"], kind)
+            self.assertEqual(state["status"], "complete")
+
+    def test_manifest_discovers_component_artwork_and_localizations(self):
+        manifest = json.dumps({
+            "pass.json": "a" * 40,
+            "logo@3x.png": "b" * 40,
+            "strip@2x.png": "c" * 40,
+            "zh-Hans.lproj/logo@3x.png": "d" * 40,
+            "../secret.png": "e" * 40,
+        }).encode()
+        expected = ("strip@2x.png", "logo@3x.png",
+                    "zh-Hans.lproj/logo@3x.png")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            def fake_one(_udid, _target, name, directory, state):
+                if name == "manifest.json":
+                    return manifest
+                self.assertIn(name, expected)
+                path = directory / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(PNG)
+                state["assets"][name] = {"sha256": hashlib.sha256(PNG).hexdigest(),
+                                         "formatRecognized": True}
+                return PNG
+            with patch.object(card_export, "_export_one", side_effect=fake_one):
+                result = card_export.export_card("device", HASH, root / "face.zip", root / "recovery")
+            self.assertEqual(result.exported, expected)
+            with zipfile.ZipFile(root / "face.zip") as archive:
+                self.assertEqual(archive.namelist(), list(expected))
+
+    def test_manifest_rejects_unsupported_paths(self):
+        self.assertFalse(card_export.supported_artwork_name("../strip.png"))
+        self.assertFalse(card_export.supported_artwork_name("bad.lproj/../../logo.png"))
+        self.assertTrue(card_export.supported_artwork_name("zh-Hans.lproj/logo@3x.png"))
+        self.assertTrue(card_export.supported_artwork_name("customArt@2x.png"))
+        self.assertFalse(card_export.supported_artwork_name("pass.json"))
+
     def test_archive_contains_only_all_fixed_assets(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -157,6 +220,31 @@ class ExportTests(unittest.TestCase):
                 data = card_export._export_one("device", "/var/tmp", card_export.ASSETS[0], Path(temp), state)
             self.assertEqual(data, raw)
             self.assertFalse(state["assets"][card_export.ASSETS[0]]["formatRecognized"])
+
+    def test_localized_resource_uses_its_directory_for_writeback(self):
+        name = "zh-Hans.lproj/logo@3x.png"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state = {"assets": {}}
+            probes = 0
+            def fake_native(command, _udid, *args):
+                nonlocal probes
+                if command == "afc-stat":
+                    probes += 1
+                    return (ok(kind="S_IFREG", size=len(PNG)) if probes == 1 else
+                            {"exitCode": 1, "operation": {"ok": False}})
+                if command == "afc-read":
+                    Path(args[1]).write_bytes(PNG)
+                    return ok(size=len(PNG))
+                return ok()
+            with (patch.object(card_export.airlift, "native", side_effect=fake_native),
+                  patch.object(card_export.airlift, "run_json", return_value={"ok": True, "exitCode": 0}),
+                  patch.object(card_export.airlift, "write_file", return_value=True) as write,
+                  patch.object(card_export.airlift, "read_file", return_value=PNG) as read):
+                self.assertEqual(card_export._export_one("device", "/var/tmp", name, root, state), PNG)
+            write.assert_called_once_with("device", "/var/tmp/zh-Hans.lproj", "logo@3x.png", PNG)
+            read.assert_called_once_with("device", "/var/tmp/zh-Hans.lproj", "logo@3x.png")
+            self.assertEqual((root / name).read_bytes(), PNG)
 
     def test_mac_backup_is_retained_when_device_staging_copy_disappears(self):
         with tempfile.TemporaryDirectory() as temp:

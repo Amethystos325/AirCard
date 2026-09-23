@@ -35,15 +35,15 @@ cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>AirCard</string>
+    <string>AirCard Lite</string>
     <key>CFBundleDisplayName</key>
-    <string>AirCard</string>
+    <string>AirCard Lite</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.2.4</string>
+    <string>0.1</string>
     <key>CFBundleVersion</key>
     <string>7</string>
     <key>LSMinimumSystemVersion</key>

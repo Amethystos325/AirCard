@@ -10,7 +10,7 @@ import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
-from card_export import ASSETS, CARD_HASH, ExportResult, _durable_write
+from card_export import CARD_HASH, ExportResult, _durable_write, artwork_order, supported_artwork_name
 
 
 CACHE_ROOT = Path.home() / "Library" / "Application Support" / "AirCard" / "ArtworkCache"
@@ -53,7 +53,7 @@ def save_cached_card(card_hash: str, result: ExportResult,
     version_dir.mkdir(mode=0o700)
     checksums = {}
     for name in result.exported:
-        if name not in ASSETS:
+        if not supported_artwork_name(name):
             raise ValueError(f"Unexpected artwork name: {name}")
         data = (result.recovery / name).read_bytes()
         digest = hashlib.sha256(data).hexdigest()
@@ -61,6 +61,7 @@ def save_cached_card(card_hash: str, result: ExportResult,
         if not data or digest != expected:
             raise ValueError(f"Recovery checksum did not match for {name}")
         destination = version_dir / name
+        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         _durable_write(destination, data)
         if hashlib.sha256(destination.read_bytes()).hexdigest() != digest:
             raise OSError(f"Cached copy did not verify for {name}")
@@ -91,17 +92,18 @@ def get_cached_card(card_hash: str, cache_root: Path = CACHE_ROOT) -> dict | Non
             return None
         files = {}
         for name, digest in assets.items():
-            if name not in ASSETS or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            if not supported_artwork_name(name) or not re.fullmatch(r"[0-9a-f]{64}", digest):
                 return None
             path = card_dir / generation / name
             if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
                 return None
             files[name] = str(path)
-        preview_name = next((name for name in ASSETS if name in files), None)
+        ordered = sorted(files, key=artwork_order)
+        preview_name = ordered[0] if ordered else None
         if preview_name is None:
             return None
         return {"preview": files[preview_name], "previewName": preview_name,
-                "assets": [name for name in ASSETS if name in files],
+                "assets": ordered,
                 "cachedAt": manifest.get("cachedAt"), "files": files}
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
         return None

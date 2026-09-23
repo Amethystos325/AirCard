@@ -18,6 +18,14 @@ from card_assets import PDF_ASSET_NAME, PNG_ASSET_NAMES
 
 
 ASSETS = (*PNG_ASSET_NAMES, PDF_ASSET_NAME)
+PASS_IMAGE_TYPES = (
+    "artwork", "strip", "background", "thumbnail", "logo",
+    "primaryLogo", "secondaryLogo", "footer", "icon",
+)
+PASS_IMAGE = re.compile(
+    r"(?:(?:[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)\.lproj/)?"
+    r"[A-Za-z][A-Za-z0-9_-]*(?:@[0-9]x)?\.png\Z"
+)
 MAX_ASSET_SIZE = 32 * 1024 * 1024
 CARD_HASH = re.compile(r"[-A-Za-z0-9_+=]{20,64}\Z")
 RECOVERY_ROOT = Path.home() / "Library" / "Application Support" / "AirCard" / "Recovery"
@@ -37,6 +45,49 @@ class ExportResult:
     exported: tuple[str, ...]
     unavailable: tuple[str, ...]
     unrecognized: tuple[str, ...]
+
+
+def classify_pass_data(data: bytes) -> str:
+    """Recognize payment/transit credentials without guessing from artwork."""
+    try:
+        document = json.loads(data)
+    except (ValueError, UnicodeDecodeError):
+        return "unknown"
+    if not isinstance(document, dict):
+        return "unknown"
+    if isinstance(document.get("paymentCard"), dict) or isinstance(document.get("transitCard"), dict):
+        return "secure-element"
+    if any(isinstance(document.get(key), dict) for key in
+           ("storeCard", "coupon", "generic", "boardingPass", "eventTicket")):
+        return "ordinary"
+    return "unknown"
+
+
+def classify_card(udid: str, card_hash: str,
+                  recovery_root: Path = RECOVERY_ROOT) -> tuple[str, Path]:
+    """Read pass.json with the same verified restore path as artwork export."""
+    if not CARD_HASH.fullmatch(card_hash):
+        raise ValueError("Invalid card hash")
+    recovery_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(recovery_root, 0o700)
+    directory = Path(tempfile.mkdtemp(prefix="classification-", dir=recovery_root))
+    state = {"cardHash": card_hash, "deviceUDID": udid, "assets": {}}
+    _save_state(directory, state)
+    target = f"/var/mobile/Library/Passes/Cards/{card_hash}.pkpass"
+    try:
+        data = _export_one(udid, target, "pass.json", directory, state)
+    except AssetUnavailable:
+        kind = "unknown"
+    except Exception:
+        state["status"] = "incomplete"
+        _save_state(directory, state)
+        raise
+    else:
+        kind = classify_pass_data(data)
+    state["classification"] = kind
+    state["status"] = "complete"
+    _save_state(directory, state)
+    return kind, directory
 
 
 def _durable_write(path: Path, data: bytes) -> None:
@@ -82,7 +133,43 @@ def _valid_asset(name: str, data: bytes) -> bool:
         return False
     if name.endswith(".png"):
         return data.startswith(b"\x89PNG\r\n\x1a\n") and data[12:16] == b"IHDR" and b"IEND" in data[-24:]
+    if name in ("manifest.json", "pass.json"):
+        try:
+            return isinstance(json.loads(data), dict)
+        except (ValueError, UnicodeDecodeError):
+            return False
     return data.startswith(b"%PDF-") and b"%%EOF" in data[-1024:]
+
+
+def supported_artwork_name(name: str) -> bool:
+    return name in ASSETS or bool(PASS_IMAGE.fullmatch(name))
+
+
+def artwork_order(name: str) -> tuple[int, int, int, str]:
+    basename = name.rsplit("/", 1)[-1]
+    image_type = basename.split("@", 1)[0].split(".", 1)[0]
+    if name in ASSETS:
+        return (0, ASSETS.index(name), 0, name)
+    resolution = 0 if "@3x" in basename else 1 if "@2x" in basename else 2
+    type_priority = (PASS_IMAGE_TYPES.index(image_type)
+                     if image_type in PASS_IMAGE_TYPES else len(PASS_IMAGE_TYPES))
+    return (1 + type_priority, resolution,
+            1 if "/" in name else 0, name)
+
+
+def _manifest_artwork(data: bytes) -> tuple[str, ...]:
+    if len(data) > 1024 * 1024:
+        raise ExportError("Pass manifest is too large")
+    try:
+        manifest = json.loads(data)
+    except (ValueError, UnicodeDecodeError) as error:
+        raise ExportError("Pass manifest is invalid") from error
+    if not isinstance(manifest, dict):
+        raise ExportError("Pass manifest is not a resource list")
+    return tuple(sorted((name for name, digest in manifest.items()
+                         if isinstance(name, str) and supported_artwork_name(name)
+                         and isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{40}", digest)),
+                        key=artwork_order))
 
 
 def _stat_recovered(udid: str, recovered: str) -> int | None:
@@ -100,15 +187,22 @@ def _stat_recovered(udid: str, recovered: str) -> int | None:
 
 def _export_one(udid: str, target: str, name: str, directory: Path,
                 state: dict) -> bytes:
+    if name not in ("manifest.json", "pass.json") and not supported_artwork_name(name):
+        raise ValueError("Unsupported artwork path")
+    resource_target = (posixpath.join(target, posixpath.dirname(name))
+                       if "/" in name else target)
+    resource_leaf = posixpath.basename(name)
     token = secrets.token_hex(10)
     source = f"{airlift.SOURCE_PREFIX}{token}"
     link = f"{airlift.LINK_PREFIX}{token}"
     recovered = f"{airlift.RECOVERED_PREFIX}{token}"
     snapshot_root = directory / f"{name}.books-snapshot"
+    snapshot_root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     snapshot_root.mkdir(mode=0o700)
     archive_path = directory / f"{name}.stage.zip"
     books_path = directory / f"{name}.Books.plist"
     local_path = directory / name
+    local_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     identifiers = [
         f"../../{source}/p0/p1/p2/link",
         posixpath.relpath(posixpath.join(target, name), airlift.AIRLOCK_ROOT),
@@ -169,12 +263,12 @@ def _export_one(udid: str, target: str, name: str, directory: Path,
         _save_state(directory, state)
         if moved.get("exitCode") != 0 or not moved.get("ok"):
             raise ExportError(f"AirTraffic reported a transfer error for {name}")
-        if not airlift.write_file(udid, target, name, data):
+        if not airlift.write_file(udid, resource_target, resource_leaf, data):
             raise ExportError(f"Cannot restore the card copy of {name}")
         entry["status"] = "card-copy-written"
         _save_state(directory, state)
         # This read checks the new copy; its own restoration is best effort.
-        copied = airlift.read_file(udid, target, name)
+        copied = airlift.read_file(udid, resource_target, resource_leaf)
         if copied != data:
             raise ExportError(f"The restored card copy of {name} did not verify")
         entry["status"] = "card-copy-verified"
@@ -244,13 +338,25 @@ def export_card(udid: str, card_hash: str, output: Path | None,
     assets = {}
     unavailable = []
     try:
-        for name in ASSETS:
+        try:
+            manifest_data = _export_one(udid, target, "manifest.json", directory, state)
+        except AssetUnavailable:
+            discovered = ()
+        else:
+            try:
+                discovered = _manifest_artwork(manifest_data)
+            except ExportError:
+                discovered = ()
+        # Apple Pay's combined artwork is not a documented pass resource.
+        # Retain the established probe when the pass has no usable manifest.
+        candidates = discovered or ASSETS
+        for name in candidates:
             try:
                 assets[name] = _export_one(udid, target, name, directory, state)
             except AssetUnavailable:
                 unavailable.append(name)
         if not assets:
-            raise ExportError("None of the three card face assets could be read")
+            raise ExportError("No card artwork resource could be read")
         if output is not None:
             output.parent.mkdir(parents=True, exist_ok=True)
             pending = output.with_name(output.name + f".{secrets.token_hex(6)}.pending")

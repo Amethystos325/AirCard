@@ -30,6 +30,26 @@ def recovery_result(root: Path, data: bytes = DATA) -> card_export.ExportResult:
 
 
 class CacheTests(unittest.TestCase):
+    def test_cache_preserves_localized_artwork_paths(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            recovery = base / "recovery"
+            names = ("logo@3x.png", "zh-Hans.lproj/logo@3x.png")
+            for name in names:
+                path = recovery / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(DATA)
+            (recovery / "state.json").write_text(json.dumps({
+                "cardHash": HASH,
+                "assets": {name: {"sha256": hashlib.sha256(DATA).hexdigest()}
+                           for name in names},
+            }))
+            result = card_export.ExportResult(recovery, names, (), ())
+            cached = card_cache.save_cached_card(HASH, result, base / "cache")
+            self.assertEqual(cached["assets"], list(names))
+            self.assertEqual(set(cached["files"]), set(names))
+            self.assertEqual(Path(cached["files"][names[1]]).read_bytes(), DATA)
+
     def test_cache_survives_reload_and_detects_tampering(self):
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
