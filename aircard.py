@@ -128,9 +128,6 @@ def get_connected_device() -> dict | None:
         "name": device.get("name") or "iPhone",
         "version": device.get("version") or "Unknown",
         "product": device["product"],
-        "language": device.get("language") or "en",
-        "locale": device.get("locale") or "",
-        "bold_text": device.get("bold_text"),
     }
 
 
