@@ -48,15 +48,17 @@
 5. Click **Flash Skins**.
 6. Force-close the **Wallet** app on your iPhone from the App Switcher (or reboot) to see your new custom card design!
 
-### Export card artwork
+### Read & export card artwork
 
-Connect the iPhone and click **读取卡面** below a card to copy and cache its
-current artwork files. The preview appears on the card and remains available
-after restarting AirCard. Click **查看大图** to inspect the full-size cached image. A
+Connect the iPhone and click **读取卡面** below a card to copy and cache all of
+its current artwork files. The preview appears on the card and remains available
+after restarting AirCard. Click the card to inspect the full-size image. A
 skin selected for flashing is displayed separately from the cached artwork.
 
-Click **提取卡面** to save a ZIP of card artwork. This also updates the cache and
-refreshes the preview. AirCard tries the card's three fixed artwork assets:
+Once a card has been read, the **export** button (arrow-up icon) becomes
+available: it saves a ZIP of every cached artwork file straight from the local
+cache, without contacting the device again. AirCard reads the card's three fixed
+artwork assets:
 `cardBackgroundCombined@3x.png`, `cardBackgroundCombined@2x.png`, and
 `cardBackgroundCombined.pdf`. It tries each file independently and puts every
 successfully read file in the ZIP. The result lists files that were unavailable.

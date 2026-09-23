@@ -23,16 +23,18 @@ struct CardItem: Identifiable, Hashable {
     var cachedArtworkURL: URL? = nil
     var cachedArtwork: NSImage? = nil
     var cachedAssetNames: [String] = []
-    
+    var cachedFiles: [String: String] = [:]
+
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
-    
+
     static func == (lhs: CardItem, rhs: CardItem) -> Bool {
         lhs.id == rhs.id && lhs.isSelected == rhs.isSelected &&
         lhs.customImageURL == rhs.customImageURL &&
         lhs.cachedArtworkURL == rhs.cachedArtworkURL &&
-        lhs.cachedAssetNames == rhs.cachedAssetNames
+        lhs.cachedAssetNames == rhs.cachedAssetNames &&
+        lhs.cachedFiles == rhs.cachedFiles
     }
 }
 
@@ -256,6 +258,7 @@ class AppViewModel: ObservableObject {
                 cards[index].cachedArtworkURL = url
                 cards[index].cachedArtwork = image
                 cards[index].cachedAssetNames = names
+                cards[index].cachedFiles = files
                 return
             }
         }
@@ -558,27 +561,18 @@ class AppViewModel: ObservableObject {
     
     // MARK: - Skin Application
 
-    func exportCard(_ cardHash: String, to output: URL) {
-        performArtworkOperation(cardHash, output: output)
-    }
-
+    /// Reads every available artwork asset (all @3x/@2x PNG and PDF variants)
+    /// from the device and caches them so they can be previewed and exported.
     func readCardArtwork(_ cardHash: String) {
-        performArtworkOperation(cardHash, output: nil)
-    }
-
-    private func performArtworkOperation(_ cardHash: String, output: URL?) {
         guard let udid = device?.udid else {
             exportMessage = "请先连接 iPhone。"
             return
         }
         guard !isExporting && !isReadingArtwork && !isFlashing else { return }
-        let isExport = output != nil
-        isExporting = isExport
-        isReadingArtwork = !isExport
-        exportingCardID = isExport ? cardHash : nil
-        readingCardID = isExport ? nil : cardHash
+        isReadingArtwork = true
+        readingCardID = cardHash
         showLogs = true
-        statusText = isExport ? "正在提取卡面…" : "正在读取卡面…"
+        statusText = "正在读取卡面…"
         log(statusText)
         let scriptDir = self.scriptDir
         Task.detached {
@@ -586,11 +580,7 @@ class AppViewModel: ObservableObject {
             process.executableURL = AppViewModel.pythonExecutableURL
             process.environment = AppViewModel.processEnvironment
             process.currentDirectoryURL = URL(fileURLWithPath: scriptDir)
-            if let output {
-                process.arguments = ["aircard_backend.py", "--export-card", udid, cardHash, output.path]
-            } else {
-                process.arguments = ["aircard_backend.py", "--read-card", udid, cardHash]
-            }
+            process.arguments = ["aircard_backend.py", "--read-card", udid, cardHash]
             let pipe = Pipe()
             process.standardOutput = pipe
             process.standardError = Pipe()
@@ -604,37 +594,81 @@ class AppViewModel: ObservableObject {
                     return try? JSONSerialization.jsonObject(with: bytes) as? [String: Any]
                 }.first
                 let succeeded = process.terminationStatus == 0 && (result?["ok"] as? Bool == true)
-                let message = (result?["message"] as? String) ?? "卡面操作失败，请查看日志。"
+                let message = (result?["message"] as? String) ?? "卡面读取失败，请查看日志。"
                 await MainActor.run {
-                    self.isExporting = false
                     self.isReadingArtwork = false
-                    self.exportingCardID = nil
                     self.readingCardID = nil
-                    self.statusText = succeeded ? (isExport ? "卡面导出成功。" : "卡面读取成功。") : "卡面操作失败。"
+                    self.statusText = succeeded ? "卡面读取成功。" : "卡面读取失败。"
                     self.log(message)
                     if let recovery = result?["recovery"] as? String {
                         self.log("Recovery copies: \(recovery)")
                     }
                     if succeeded, let cache = result?["cache"] as? [String: Any] {
                         self.applyCachedArtwork(cache, to: cardHash)
-                    }
-                    if succeeded, let output {
-                        let cacheWarning = (result?["cacheError"] as? String).map { "\n缓存未更新：\($0)" } ?? ""
-                        self.exportMessage = "\(message)\n\n已保存至 \(output.path)\(cacheWarning)"
                     } else {
                         self.exportMessage = message
                     }
                 }
             } catch {
                 await MainActor.run {
-                    self.isExporting = false
                     self.isReadingArtwork = false
-                    self.exportingCardID = nil
                     self.readingCardID = nil
-                    self.statusText = "卡面操作失败。"
-                    self.exportMessage = "无法启动卡面操作：\(error.localizedDescription)"
-                    self.log(self.exportMessage ?? "卡面操作失败")
+                    self.statusText = "卡面读取失败。"
+                    self.exportMessage = "无法启动卡面读取：\(error.localizedDescription)"
+                    self.log(self.exportMessage ?? "卡面读取失败")
                 }
+            }
+        }
+    }
+
+    /// Exports the already-read artwork files as a ZIP without touching the
+    /// device again. Includes every cached asset variant.
+    func exportCachedArtwork(_ cardHash: String, to output: URL) {
+        guard let idx = cards.firstIndex(where: { $0.id == cardHash }) else { return }
+        let files = cards[idx].cachedFiles
+        guard !files.isEmpty else {
+            exportMessage = "请先读取卡面，再导出素材。"
+            return
+        }
+        isExporting = true
+        exportingCardID = cardHash
+        statusText = "正在导出卡面素材…"
+        log(statusText)
+        Task.detached {
+            let paths = files.values.filter { FileManager.default.fileExists(atPath: $0) }
+            var errorText: String?
+            if paths.isEmpty {
+                errorText = "缓存文件已失效，请重新读取卡面。"
+            } else {
+                try? FileManager.default.removeItem(at: output)
+                let zip = Process()
+                zip.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+                zip.arguments = ["-j", "-q", output.path] + paths
+                zip.standardOutput = FileHandle.nullDevice
+                zip.standardError = FileHandle.nullDevice
+                do {
+                    try zip.run()
+                    zip.waitUntilExit()
+                    if zip.terminationStatus != 0 || !FileManager.default.fileExists(atPath: output.path) {
+                        errorText = "打包 ZIP 失败（代码 \(zip.terminationStatus)）。"
+                    }
+                } catch {
+                    errorText = "无法启动打包程序：\(error.localizedDescription)"
+                }
+            }
+            let count = paths.count
+            let finalError = errorText
+            await MainActor.run {
+                self.isExporting = false
+                self.exportingCardID = nil
+                if let errorText = finalError {
+                    self.statusText = "卡面素材导出失败。"
+                    self.exportMessage = errorText
+                } else {
+                    self.statusText = "卡面素材导出成功。"
+                    self.exportMessage = "已导出 \(count) 个卡面素材文件至：\n\(output.path)"
+                }
+                self.log(self.exportMessage ?? "")
             }
         }
     }
@@ -809,298 +843,334 @@ struct WalletCardView: View {
     let onClearImage: () -> Void
     let onRead: () -> Void
     let onExport: () -> Void
-    let onViewCached: () -> Void
+    let onViewLarge: () -> Void
     let onDelete: () -> Void
-    let exportDisabled: Bool
-    let isExporting: Bool
+    let readDisabled: Bool
     let isReading: Bool
-    
+    let isExporting: Bool
+
+    private static let cardCorner: CGFloat = 18
+
     @State private var isHovered = false
     @State private var isTargeted = false
     @State private var copied = false
-    
+    // Normalized pointer position within the card (-0.5 ... 0.5) for the tilt.
+    @State private var pointer: CGSize = .zero
+    // Drives the sweeping scan shimmer while reading (-1 ... 1).
+    @State private var scanX: CGFloat = -1
+
+    private var displayImage: NSImage? { card.customImage ?? card.cachedArtwork }
+    private var hasArt: Bool { displayImage != nil }
+
     var body: some View {
-        VStack(spacing: 10) {
-            // Card Mockup
-            ZStack {
-                if let img = card.customImage {
-                    // Custom Skin Applied
-                    ZStack(alignment: .topTrailing) {
-                        Image(nsImage: img)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 290, height: 182)
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        
-                        // Subtle Gloss
-                        LinearGradient(
-                            colors: [.white.opacity(0.18), .clear, .black.opacity(0.12)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        
-                        // Top Right Clear Button
-                        Button(action: onClearImage) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(.white.opacity(0.9))
-                                .background(Circle().fill(Color.black.opacity(0.55)))
-                        }
-                        .buttonStyle(.plain)
-                        .padding(10)
-                        .help("Remove skin")
-                        
-                        // Hover overlay: Change Skin
-                        if isHovered {
-                            VStack {
-                                Spacer()
-                                HStack {
-                                    Spacer()
-                                    Label("Change Skin", systemImage: "photo.badge.arrow.forward")
-                                        .font(.caption)
-                                        .fontWeight(.semibold)
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 6)
-                                        .background(.ultraThinMaterial)
-                                        .cornerRadius(20)
-                                        .shadow(radius: 4)
-                                    Spacer()
-                                }
-                                .padding(.bottom, 12)
-                            }
-                        }
-                    }
-                } else if let cached = card.cachedArtwork {
-                    ZStack(alignment: .topLeading) {
-                        Image(nsImage: cached)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 290, height: 182)
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        Text("已缓存卡面")
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(.ultraThinMaterial)
-                            .clipShape(Capsule())
-                            .padding(10)
-                    }
-                } else {
-                    // Empty / Placeholder Card Mockup
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        Color(NSColor.controlBackgroundColor),
-                                        Color(NSColor.windowBackgroundColor).opacity(0.8)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                        
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(
-                                isTargeted ? Color.accentColor : (isHovered ? Color.secondary.opacity(0.4) : Color.secondary.opacity(0.2)),
-                                style: StrokeStyle(lineWidth: isTargeted ? 2 : 1, dash: card.customImage == nil ? [6, 4] : [])
-                            )
-                        
-                        // Card Chip & Contactless indicator
-                        VStack(alignment: .leading) {
-                            HStack {
-                                Image(systemName: "wave.3.right")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.secondary.opacity(0.5))
-                                Spacer()
-                                Image(systemName: "creditcard")
-                                    .font(.system(size: 16))
-                                    .foregroundColor(.secondary.opacity(0.4))
-                            }
-                            .padding(14)
-                            Spacer()
-                        }
-                        
-                        // Center Action
-                        VStack(spacing: 8) {
-                            Image(systemName: isHovered || isTargeted ? "photo.badge.plus" : "plus.circle.fill")
-                                .font(.system(size: 32))
-                                .foregroundColor(isTargeted ? .accentColor : (isHovered ? .accentColor : .secondary.opacity(0.7)))
-                                .scaleEffect(isHovered ? 1.08 : 1.0)
-                                .animation(.spring(response: 0.3), value: isHovered)
-                            
-                            Text(isTargeted ? "Drop image here" : "Assign Card Skin")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .foregroundColor(.primary)
-                            
-                            Text("Click to browse or drag image")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .frame(width: 290, height: 182)
-                }
-            }
-            .frame(width: 290, height: 182)
-            .shadow(color: .black.opacity(isHovered ? 0.22 : 0.12), radius: isHovered ? 10 : 5, y: isHovered ? 5 : 2)
-            .onHover { h in isHovered = h }
-            .onTapGesture { onPickImage() }
-            .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: $isTargeted) { providers in
-                guard let provider = providers.first else { return false }
-                if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                    provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                        var fileURL: URL?
-                        if let url = item as? URL {
-                            fileURL = url
-                        } else if let data = item as? Data, let urlStr = String(data: data, encoding: .utf8), let url = URL(string: urlStr) {
-                            fileURL = url
-                        }
-                        if let url = fileURL, let img = NSImage(contentsOf: url) {
-                            Task { @MainActor in
-                                card.customImageURL = url
-                                card.customImage = img
-                                card.isSelected = true
-                            }
-                        }
-                    }
-                    return true
-                } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-                    provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { item, _ in
-                        if let url = item as? URL, let img = NSImage(contentsOf: url) {
-                            Task { @MainActor in
-                                card.customImageURL = url
-                                card.customImage = img
-                                card.isSelected = true
-                            }
-                        } else if let img = item as? NSImage {
-                            let tempURL = FileManager.default.temporaryDirectory
-                                .appendingPathComponent("aircard_drop_\(UUID().uuidString).png")
-                            if let tiff = img.tiffRepresentation,
-                               let rep = NSBitmapImageRep(data: tiff),
-                               let pngData = rep.representation(using: .png, properties: [:]) {
-                                try? pngData.write(to: tempURL)
-                            }
-                            Task { @MainActor in
-                                card.customImageURL = tempURL
-                                card.customImage = img
-                                card.isSelected = true
-                            }
-                        }
-                    }
-                    return true
-                }
-                return false
-            }
-            
-            // Bottom Info & Controls
-            HStack(spacing: 8) {
-                Toggle("", isOn: $card.isSelected)
-                    .labelsHidden()
-                    .help("Include in flash")
-                
-                Text("Card #\(cardIndex + 1)")
-                    .font(.system(size: 12, weight: .semibold))
-                
-                // Monospace Hash Pill with Copy
-                HStack(spacing: 4) {
-                    Text(card.id.prefix(8) + "…" + card.id.suffix(6))
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(.secondary)
-                    
-                    Button(action: {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(card.id, forType: .string)
-                        copied = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
-                    }) {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 9))
-                            .foregroundColor(copied ? .green : .secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help(copied ? "Copied!" : "Copy full hash")
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(Color(NSColor.controlBackgroundColor))
-                .cornerRadius(6)
-                
-                Spacer()
-
-                // Status badge
-                if card.customImage != nil {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                        .font(.system(size: 12))
-                        .help("Skin assigned and ready")
-                }
-                
-                // Delete button
-                Button(action: onDelete) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary.opacity(0.7))
-                }
-                .buttonStyle(.plain)
-                .help("Remove from list")
-            }
-            .padding(.horizontal, 4)
-
-            if let cached = card.cachedArtwork {
-                HStack(spacing: 8) {
-                    Image(nsImage: cached)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 48, height: 32)
-                        .clipShape(RoundedRectangle(cornerRadius: 5))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("当前卡面缓存")
-                            .font(.caption.weight(.semibold))
-                        Text("\(card.cachedAssetNames.count) 个文件")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Button("查看大图", action: onViewCached)
-                        .buttonStyle(.link)
-                        .font(.caption)
-                }
-                .padding(6)
-                .background(Color(NSColor.windowBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-
-            HStack(spacing: 8) {
-                Button(action: onRead) {
-                    Label(isReading ? "正在读取…" : "读取卡面",
-                          systemImage: isReading ? "hourglass" : "arrow.down.circle")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(exportDisabled)
-                .help("从 iPhone 读取卡面并缓存到本机")
-
-                Button(action: onExport) {
-                    Label(isExporting ? "正在提取…" : "提取卡面",
-                          systemImage: "square.and.arrow.down.on.square")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .disabled(exportDisabled)
-                .help("将读取到的卡面文件导出为 ZIP，并刷新本机缓存")
-            }
+        VStack(spacing: 12) {
+            cardVisual
+            infoRow
+            actionRow
         }
-        .padding(10)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(NSColor.controlBackgroundColor).opacity(0.4))
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(.regularMaterial)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(card.isSelected ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(card.isSelected ? Color.accentColor.opacity(0.35) : Color.primary.opacity(0.06),
+                              lineWidth: 1)
         )
+    }
+
+    // MARK: Card artwork with holographic hover tilt
+
+    private var cardVisual: some View {
+        let maxTilt = 9.0
+        return ZStack {
+            if let img = displayImage {
+                Image(nsImage: img)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                placeholder
+            }
+        }
+        .frame(width: 290, height: 182)
+        .clipShape(RoundedRectangle(cornerRadius: Self.cardCorner, style: .continuous))
+        // Base gloss for real artwork so it reads as a physical card.
+        .overlay {
+            if hasArt {
+                LinearGradient(colors: [.white.opacity(0.14), .clear, .black.opacity(0.10)],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .clipShape(RoundedRectangle(cornerRadius: Self.cardCorner, style: .continuous))
+                    .allowsHitTesting(false)
+            }
+        }
+        // Scanning shimmer while reading artwork from the device.
+        .overlay { scanOverlay.allowsHitTesting(false) }
+        .overlay(alignment: .topTrailing) { clearButton }
+        .overlay { targetHighlight.allowsHitTesting(false) }
+        .contentShape(RoundedRectangle(cornerRadius: Self.cardCorner, style: .continuous))
+        .scaleEffect(isHovered ? 1.03 : 1.0)
+        .rotation3DEffect(.degrees(Double(-pointer.height) * maxTilt),
+                          axis: (x: 1, y: 0, z: 0), perspective: 0.6)
+        .rotation3DEffect(.degrees(Double(pointer.width) * maxTilt),
+                          axis: (x: 0, y: 1, z: 0), perspective: 0.6)
+        .shadow(color: .black.opacity(isHovered ? 0.28 : 0.12),
+                radius: isHovered ? 16 : 6,
+                x: CGFloat(pointer.width) * 10,
+                y: isHovered ? 10 - CGFloat(pointer.height) * 10 : 3)
+        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: pointer)
+        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: isHovered)
+        .animation(.easeInOut(duration: 0.25), value: isReading)
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let location):
+                isHovered = true
+                pointer = CGSize(width: location.x / 290 - 0.5,
+                                 height: location.y / 182 - 0.5)
+            case .ended:
+                isHovered = false
+                pointer = .zero
+            }
+        }
+        .onTapGesture { if hasArt { onViewLarge() } }
+        .help(hasArt ? "点击查看大图" : "拖入图片或点击下方“更换卡面”")
+        .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: $isTargeted) { providers in
+            handleDrop(providers)
+        }
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: Self.cardCorner, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color(NSColor.controlBackgroundColor),
+                                 Color(NSColor.windowBackgroundColor).opacity(0.7)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                )
+            RoundedRectangle(cornerRadius: Self.cardCorner, style: .continuous)
+                .strokeBorder(
+                    isTargeted ? Color.accentColor : Color.secondary.opacity(0.25),
+                    style: StrokeStyle(lineWidth: isTargeted ? 2 : 1, dash: [6, 5])
+                )
+            VStack(alignment: .leading) {
+                HStack {
+                    Image(systemName: "wave.3.right")
+                    Spacer()
+                    Image(systemName: "creditcard")
+                }
+                .font(.system(size: 15))
+                .foregroundStyle(.secondary.opacity(0.45))
+                .padding(16)
+                Spacer()
+            }
+            VStack(spacing: 8) {
+                Image(systemName: isTargeted ? "photo.badge.plus" : "creditcard")
+                    .font(.system(size: 30, weight: .light))
+                    .foregroundStyle(isTargeted ? Color.accentColor : .secondary)
+                Text(isTargeted ? "松开以放入图片" : "尚未指定卡面")
+                    .font(.subheadline.weight(.medium))
+                Text("拖入图片，或点击下方“更换卡面”")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder private var scanOverlay: some View {
+        if isReading {
+            ZStack {
+                // Frost the card into a skeleton-style placeholder while loading.
+                RoundedRectangle(cornerRadius: Self.cardCorner, style: .continuous)
+                    .fill(.ultraThinMaterial)
+
+                // Soft diagonal light sweep that feathers along its travel axis.
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: .white.opacity(0.35), location: 0.5),
+                        .init(color: .clear, location: 1.0),
+                    ],
+                    startPoint: .leading, endPoint: .trailing
+                )
+                .frame(width: 170)
+                .rotationEffect(.degrees(18))
+                .offset(x: scanX * 280)
+                .blendMode(.screen)
+
+                Label("读取中…", systemImage: "dot.radiowaves.left.and.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.regularMaterial, in: Capsule())
+            }
+            .clipShape(RoundedRectangle(cornerRadius: Self.cardCorner, style: .continuous))
+            .transition(.opacity)
+            .onAppear {
+                scanX = -1
+                withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
+                    scanX = 1
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var targetHighlight: some View {
+        if isTargeted {
+            RoundedRectangle(cornerRadius: Self.cardCorner, style: .continuous)
+                .strokeBorder(Color.accentColor, lineWidth: 3)
+        }
+    }
+
+    @ViewBuilder private var clearButton: some View {
+        if card.customImage != nil {
+            Button(action: onClearImage) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 20))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, .black.opacity(0.5))
+            }
+            .buttonStyle(.plain)
+            .padding(10)
+            .help("移除已选卡面")
+        }
+    }
+
+    // MARK: Info row (selection, index, hash)
+
+    private var infoRow: some View {
+        HStack(spacing: 8) {
+            Toggle("", isOn: $card.isSelected)
+                .labelsHidden()
+                .toggleStyle(.checkbox)
+                .help("加入刷写队列")
+
+            Text("Card #\(cardIndex + 1)")
+                .font(.system(size: 12, weight: .semibold))
+
+            HStack(spacing: 4) {
+                Text(card.id.prefix(8) + "…" + card.id.suffix(6))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Button(action: copyHash) {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 9))
+                        .foregroundStyle(copied ? Color.green : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help(copied ? "已复制" : "复制完整标识")
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(.quaternary, in: Capsule())
+
+            Spacer()
+
+            if card.customImage != nil {
+                Image(systemName: "checkmark.seal.fill")
+                    .foregroundStyle(.green)
+                    .font(.system(size: 13))
+                    .help("卡面已就绪，可刷写")
+            }
+
+            Button(action: onDelete) {
+                Image(systemName: "trash")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("从列表移除")
+        }
+        .padding(.horizontal, 2)
+    }
+
+    // MARK: Action row
+
+    private var actionRow: some View {
+        HStack(spacing: 8) {
+            Button(action: onPickImage) {
+                Label(card.customImage == nil ? "更换卡面" : "重新选择",
+                      systemImage: "photo")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .help("从本机选择一张图片作为卡面")
+
+            Button(action: onRead) {
+                Label(isReading ? "读取中…" : "读取卡面",
+                      systemImage: isReading ? "hourglass" : "arrow.down.circle")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(readDisabled)
+            .help("从 iPhone 读取全部卡面素材并缓存")
+
+            Button(action: onExport) {
+                Image(systemName: isExporting ? "hourglass" : "square.and.arrow.up")
+            }
+            .buttonStyle(.bordered)
+            .disabled(card.cachedFiles.isEmpty || isExporting)
+            .help("导出已读取的卡面素材（ZIP）")
+        }
+        .controlSize(.regular)
+    }
+
+    // MARK: Helpers
+
+    private func copyHash() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(card.id, forType: .string)
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+    }
+
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                var fileURL: URL?
+                if let url = item as? URL {
+                    fileURL = url
+                } else if let data = item as? Data, let urlStr = String(data: data, encoding: .utf8), let url = URL(string: urlStr) {
+                    fileURL = url
+                }
+                if let url = fileURL, let img = NSImage(contentsOf: url) {
+                    Task { @MainActor in
+                        card.customImageURL = url
+                        card.customImage = img
+                        card.isSelected = true
+                    }
+                }
+            }
+            return true
+        } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+            provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { item, _ in
+                if let url = item as? URL, let img = NSImage(contentsOf: url) {
+                    Task { @MainActor in
+                        card.customImageURL = url
+                        card.customImage = img
+                        card.isSelected = true
+                    }
+                } else if let img = item as? NSImage {
+                    let tempURL = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("aircard_drop_\(UUID().uuidString).png")
+                    if let tiff = img.tiffRepresentation,
+                       let rep = NSBitmapImageRep(data: tiff),
+                       let pngData = rep.representation(using: .png, properties: [:]) {
+                        try? pngData.write(to: tempURL)
+                    }
+                    Task { @MainActor in
+                        card.customImageURL = tempURL
+                        card.customImage = img
+                        card.isSelected = true
+                    }
+                }
+            }
+            return true
+        }
+        return false
     }
 }
 
@@ -1197,16 +1267,16 @@ struct ContentView: View {
             headerView
                 .padding(.leading, 78)
                 .padding(.trailing, 20)
-                .frame(height: 54)
-                .background(Color(NSColor.controlBackgroundColor))
-            
+                .frame(height: 58)
+                .background(.bar)
+
             Divider()
-            
+
             // 2. Card controls
             toolbarView
-                .frame(height: 48)
+                .frame(height: 50)
                 .padding(.horizontal, 20)
-                .background(Color(NSColor.windowBackgroundColor))
+                .background(.regularMaterial)
             
             Divider()
             
@@ -1223,7 +1293,7 @@ struct ContentView: View {
                         .padding(.top, 40)
                 } else {
                     LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 310, maximum: 360), spacing: 20)],
+                        columns: [GridItem(.adaptive(minimum: 330, maximum: 380), spacing: 20)],
                         spacing: 20
                     ) {
                         ForEach(Array(vm.cards.indices), id: \.self) { idx in
@@ -1234,17 +1304,18 @@ struct ContentView: View {
                                 onClearImage: { vm.clearCardImage(for: vm.cards[idx].id) },
                                 onRead: { vm.readCardArtwork(vm.cards[idx].id) },
                                 onExport: { exportCardArtwork(for: vm.cards[idx].id) },
-                                onViewCached: {
-                                    if let url = vm.cards[idx].cachedArtworkURL {
+                                onViewLarge: {
+                                    let url = vm.cards[idx].customImageURL ?? vm.cards[idx].cachedArtworkURL
+                                    if let url {
                                         artworkPreview = CachedArtworkPreview(
                                             url: url,
                                             cardLabel: "卡片 #\(idx + 1)")
                                     }
                                 },
                                 onDelete: { vm.deleteCard(id: vm.cards[idx].id) },
-                                exportDisabled: vm.device?.connected != true || vm.isExporting || vm.isReadingArtwork || vm.isFlashing,
-                                isExporting: vm.exportingCardID == vm.cards[idx].id,
-                                isReading: vm.readingCardID == vm.cards[idx].id
+                                readDisabled: vm.device?.connected != true || vm.isExporting || vm.isReadingArtwork || vm.isFlashing,
+                                isReading: vm.readingCardID == vm.cards[idx].id,
+                                isExporting: vm.exportingCardID == vm.cards[idx].id
                             )
                         }
                     }
@@ -1265,7 +1336,7 @@ struct ContentView: View {
             bottomBarView
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
-                .background(Color(NSColor.controlBackgroundColor))
+                .background(.bar)
         }
         .frame(minWidth: 880, minHeight: 680)
         .alert("Success!", isPresented: $vm.showSuccessAlert) {
@@ -1354,8 +1425,7 @@ struct ContentView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .frame(height: 32)
-            .background(Color(NSColor.windowBackgroundColor))
-            .cornerRadius(16)
+            .background(.quaternary, in: Capsule())
             
             Button(action: { showCredits = true }) {
                 Label("Credits", systemImage: "heart.fill")
@@ -1774,9 +1844,9 @@ struct ContentView: View {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.zip]
         panel.nameFieldStringValue = "AirCard-\(cardId.prefix(12)).zip"
-        panel.message = "保存这张卡当前的两张 PNG 卡面和一份 PDF。"
+        panel.message = "导出已读取的全部卡面素材（PNG 与 PDF）为 ZIP。"
         if panel.runModal() == .OK, let url = panel.url {
-            vm.exportCard(cardId, to: url)
+            vm.exportCachedArtwork(cardId, to: url)
         }
     }
     
