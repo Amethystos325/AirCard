@@ -12,6 +12,7 @@ import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from platform_io import sync_directory
 
 import apply_card_skin as airlift
 from card_assets import PDF_ASSET_NAME, PNG_ASSET_NAMES
@@ -96,11 +97,7 @@ def _durable_write(path: Path, data: bytes) -> None:
         stream.flush()
         os.fsync(stream.fileno())
     os.chmod(path, 0o600)
-    fd = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+    sync_directory(path.parent)
 
 
 def _save_state(directory: Path, state: dict) -> None:
@@ -108,24 +105,16 @@ def _save_state(directory: Path, state: dict) -> None:
     pending = directory / "state.json.pending"
     _durable_write(pending, json.dumps(state, indent=2).encode())
     os.replace(pending, path)
-    fd = os.open(directory, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+    sync_directory(directory)
 
 
 def _sync_snapshot(directory: Path) -> None:
     for path in directory.rglob("*"):
         if path.is_file():
             os.chmod(path, 0o600)
-            with path.open("rb") as stream:
+            with path.open("rb+") as stream:
                 os.fsync(stream.fileno())
-    fd = os.open(directory, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+    sync_directory(directory)
 
 
 def _valid_asset(name: str, data: bytes) -> bool:
@@ -254,7 +243,7 @@ def _export_one(udid: str, target: str, name: str, directory: Path,
             raise ExportError(f"{name} failed size verification")
         if data == b"aircard-export-staging":
             raise ExportError(f"{name} contains staging data, not a card asset")
-        with local_path.open("rb") as stream:
+        with local_path.open("rb+") as stream:
             os.fsync(stream.fileno())
         os.chmod(local_path, 0o600)
         entry["sha256"] = hashlib.sha256(data).hexdigest()
@@ -370,14 +359,10 @@ def export_card(udid: str, card_hash: str, output: Path | None,
                     for name in assets:
                         if archive.read(name) != assets[name]:
                             raise ExportError(f"Export archive failed verification: {name}")
-                with pending.open("rb") as stream:
+                with pending.open("rb+") as stream:
                     os.fsync(stream.fileno())
                 os.replace(pending, output)
-                fd = os.open(output.parent, os.O_RDONLY)
-                try:
-                    os.fsync(fd)
-                finally:
-                    os.close(fd)
+                sync_directory(output.parent)
             finally:
                 pending.unlink(missing_ok=True)
         state["status"] = "complete-partial" if unavailable else "complete"

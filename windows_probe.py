@@ -53,10 +53,11 @@ def write_report(path: Path, value: dict) -> None:
 
 
 def powershell_json(script: str) -> dict:
+    executable = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
     result = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+        [str(executable), "-NoProfile", "-NonInteractive", "-Command",
          "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); " + script],
-        capture_output=True, encoding="utf-8", timeout=35,
+        stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8", timeout=35,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if result.returncode:
@@ -156,7 +157,7 @@ def doctor(extra_roots: list[str]) -> dict:
     return result
 
 
-def prepare_apple_runtime() -> Path:
+def prepare_apple_runtime(cache_root: Path | None = None) -> Path:
     """Copy installed Store DLLs to a local probe directory (no redistribution).
 
     Windows denied LoadLibrary directly under WindowsApps in the tested setup.
@@ -173,8 +174,9 @@ def prepare_apple_runtime() -> Path:
             continue
         if platform.machine().upper() not in ("AMD64", "X86_64"):
             raise RuntimeError("This native prototype requires x64 Python")
-        identity = digest(b"".join(path.read_bytes() for path in (cf, at, md)))[:16]
-        destination = ROOT / ".tmp" / "apple-runtime" / identity
+        libraries = sorted([*source.glob("*.dll"), *(source / "AMDS64").glob("*.dll")])
+        identity = digest("".join(digest(path.read_bytes()) for path in libraries).encode())[:16]
+        destination = (cache_root or ROOT / ".tmp" / "apple-runtime") / identity
         destination.mkdir(parents=True, exist_ok=True)
         for folder in (source, source / "AMDS64"):
             for path in folder.glob("*.dll"):

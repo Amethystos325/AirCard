@@ -8,3 +8,12 @@ build/
 .tmp/
 *.dmg
 .serena/
+desktop/node_modules/
+desktop/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/binaries/
+desktop/src-tauri/gen/
+desktop/*.tsbuildinfo
+desktop/test-results/
+desktop/logs/
+*.spec

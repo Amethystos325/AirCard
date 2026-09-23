@@ -21,13 +21,24 @@
 
 ## Installation
 
-### Windows (experimental prototype)
+### Windows / macOS (new desktop test client)
+
+The new `desktop/` application uses Tauri 2, React, TypeScript and a bundled
+Python backend. It includes bilingual UI, image cropping, per-device backups,
+transaction recovery and Windows NSIS packaging. A real Suica completed the
+Windows backup → replace → restore cycle; the user confirmed both artwork
+changes in Wallet. macOS builds and device acceptance are still pending.
+See [desktop build and usage instructions](desktop/README.md) and
+[validation results and remaining checks](docs/desktop-validation.md).
+
+### Windows diagnostic prototype
 
 A Windows diagnostic prototype is available. USB pairing, unified logs, AFC
 test-file operations, StreamingZip staging, Grappa authentication, and AirTraffic
 sync readiness have been tested. A disposable file outside Media completed the
 write, readback, restore, second readback, and cleanup cycle on a real iPhone.
-**Windows card skinning is not supported yet**.
+The isolated prototype remains available for diagnostics; card operations are
+implemented in the new desktop client.
 See [setup, commands, and device-test results](docs/windows-prototype.md).
 
 ### macOS (Universal DMG)

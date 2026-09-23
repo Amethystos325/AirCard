@@ -9,6 +9,7 @@ import re
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
+from platform_io import sync_directory
 
 from card_export import CARD_HASH, ExportResult, _durable_write, artwork_order, supported_artwork_name
 
@@ -28,11 +29,7 @@ def _publish_json(path: Path, payload: dict) -> None:
     try:
         _durable_write(pending, json.dumps(payload, indent=2).encode())
         os.replace(pending, path)
-        fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+        sync_directory(path.parent)
     finally:
         pending.unlink(missing_ok=True)
 
