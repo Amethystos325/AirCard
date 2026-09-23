@@ -63,6 +63,8 @@ class Server:
                                         continue
                                     await self.engine.operate(device, card, "classify")
                                 except Exception as error:
+                                    if error_code(error) == "BUSY":
+                                        seen.discard(card)
                                     self.event({"event": "scanError", "code": error_code(error)})
                                     if self.engine.store.pending(device):
                                         self.scan_stopping = True

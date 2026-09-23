@@ -6,6 +6,7 @@ import os
 import secrets
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from platform_io import sync_directory
@@ -62,6 +63,39 @@ class Store:
     def __init__(self, root: Path | None = None):
         self.root = root or data_root()
         self.root.mkdir(parents=True, exist_ok=True)
+
+    @contextmanager
+    def operation_lock(self):
+        """Serialize device transactions across the SwiftUI and Tauri processes."""
+        path = self.root / "operation.lock"
+        with path.open("a+b") as stream:
+            if sys.platform == "win32":
+                import msvcrt
+                stream.seek(0)
+                if stream.read(1) != b"1":
+                    stream.seek(0)
+                    stream.write(b"1")
+                    stream.flush()
+                stream.seek(0)
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                except OSError as error:
+                    raise RuntimeError("BUSY") from error
+                try:
+                    yield
+                finally:
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                try:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError as error:
+                    raise RuntimeError("BUSY") from error
+                try:
+                    yield
+                finally:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
     def card(self, device: str, card: str) -> Path:
         return self.root / "devices" / identity(device)[:32] / "cards" / identity(card)[:32]

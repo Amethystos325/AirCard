@@ -5,7 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "==> [1/6] Building universal helper binaries (device_helper & airtraffic_host)..."
-make clean
 make all
 
 APP_NAME="AirCard"
@@ -43,11 +42,11 @@ cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1</string>
+    <string>0.2</string>
     <key>CFBundleVersion</key>
-    <string>7</string>
+    <string>8</string>
     <key>LSMinimumSystemVersion</key>
-    <string>12.0</string>
+    <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>
@@ -68,14 +67,31 @@ fi
 cp build/device_helper "$BIN_DIR/"
 cp build/airtraffic_host "$BIN_DIR/"
 
-# Copy python backend scripts
-cp apply_card_skin.py "$RESOURCES_DIR/"
-cp aircard.py "$RESOURCES_DIR/"
-cp aircard_backend.py "$RESOURCES_DIR/"
-cp card_assets.py "$RESOURCES_DIR/"
-cp card_export.py "$RESOURCES_DIR/"
-cp card_cache.py "$RESOURCES_DIR/"
-cp platform_io.py "$RESOURCES_DIR/"
+# Package the recoverable transaction engine for each requested architecture.
+# A native build is the default. Supply AIRCARD_PYTHON_ARM64 and
+# AIRCARD_PYTHON_X86_64 plus AIRCARD_SWIFT_ARCHES="arm64 x86_64" for a
+# universal app; each interpreter must have the locked desktop dependencies.
+SWIFT_ARCHES="${AIRCARD_SWIFT_ARCHES:-$(uname -m)}"
+for arch in $SWIFT_ARCHES; do
+    case "$arch" in arm64|x86_64) ;; *) echo "Unsupported architecture: $arch" >&2; exit 1 ;; esac
+    if [ "$arch" = "arm64" ]; then variable="AIRCARD_PYTHON_ARM64"; else variable="AIRCARD_PYTHON_X86_64"; fi
+    python="${!variable:-}"
+    if [ -z "$python" ] && [ "$arch" = "$(uname -m)" ]; then python="${AIRCARD_PYTHON:-$SCRIPT_DIR/.venv/bin/python}"; fi
+    if [ -z "$python" ] || [ ! -x "$python" ]; then
+        echo "Set $variable to a Python 3.12 interpreter with desktop dependencies." >&2
+        exit 1
+    fi
+    echo "Packaging $arch transaction backend with $python..."
+    arch -"$arch" "$python" -m PyInstaller --noconfirm --clean \
+        --distpath "$SCRIPT_DIR/build/swift-backend-$arch" \
+        --workpath "$SCRIPT_DIR/build/swift-pyinstaller-$arch" \
+        desktop/scripts/aircard-backend.macos.spec
+    package="$SCRIPT_DIR/build/swift-backend-$arch/aircard-backend"
+    mkdir -p "$package/_internal/bin" "$RESOURCES_DIR/backend/$arch"
+    # Restore the signed helper after PyInstaller modifies bundled Mach-O files.
+    cp "$SCRIPT_DIR/build/airtraffic_host" "$package/_internal/bin/airtraffic_host"
+    cp -R "$package/." "$RESOURCES_DIR/backend/$arch/"
+done
 
 # A bundle without these cannot talk to a device at all, so fail here instead
 # of shipping an app that reports "No iPhone found" for every user.
@@ -86,7 +102,7 @@ for tool in device_helper airtraffic_host; do
     fi
 done
 
-echo "==> [4/6] Compiling universal Swift binary (arm64 + x86_64)..."
+echo "==> [4/6] Compiling Swift binary ($SWIFT_ARCHES)..."
 if [ -z "${SWIFT_SDK:-}" ]; then
     SWIFT_SDK="$(xcrun --sdk macosx --show-sdk-path)"
     CLT_SWIFTUI_SDK="/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk"
@@ -94,9 +110,18 @@ if [ -z "${SWIFT_SDK:-}" ]; then
         SWIFT_SDK="$CLT_SWIFTUI_SDK"
     fi
 fi
-swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target arm64-apple-macosx14.0 AirCardApp.swift -o build/AirCard_arm64
-swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target x86_64-apple-macosx14.0 AirCardApp.swift -o build/AirCard_x86_64
-lipo -create -output "${MACOS_DIR}/AirCard" build/AirCard_arm64 build/AirCard_x86_64
+outputs=()
+for arch in $SWIFT_ARCHES; do
+    swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target "$arch-apple-macosx14.0" \
+        AirCardApp.swift SwiftCardModel.swift SwiftDesktopBridge.swift SwiftAppLifecycle.swift \
+        -o "build/AirCard_$arch"
+    outputs+=("build/AirCard_$arch")
+done
+if [ "${#outputs[@]}" -eq 1 ]; then
+    cp "${outputs[0]}" "${MACOS_DIR}/AirCard"
+else
+    lipo -create -output "${MACOS_DIR}/AirCard" "${outputs[@]}"
+fi
 chmod +x "${MACOS_DIR}/AirCard"
 
 echo "==> [5/6] Setting permissions and signing ${APP_NAME}.app bundle..."

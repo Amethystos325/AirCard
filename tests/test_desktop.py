@@ -153,6 +153,15 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, 'INVALID_CROP'):
             prepare(source, output, {'x': .8, 'y': 0, 'width': .8, 'height': 1})
 
+    def test_store_rejects_a_second_transaction_handle(self):
+        other = Store(self.root)
+        with self.store.operation_lock():
+            with self.assertRaisesRegex(RuntimeError, 'BUSY'):
+                with other.operation_lock():
+                    pass
+        with other.operation_lock():
+            pass
+
     def test_native_worker_rejects_path_escalation(self):
         with self.assertRaises(ValueError): target('../../invalid', 'pkpass', 'pass.json')
         with self.assertRaises(ValueError): target(CARD, 'pkpass', '../secret')

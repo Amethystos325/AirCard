@@ -189,13 +189,15 @@ pnpm bundle --config src-tauri/tauri.macos.conf.json
 | `1420` 端口被占用 | 检查是否已有本项目 Vite 服务，复用或正常停止旧开发会话 |
 | 后端 DLL / exe 文件被占用 | 正常关闭使用该构建目录的应用及测试窗口，等后端安全退出后重试 |
 
-## 保留的原版 SwiftUI 构建入口
+## SwiftUI 构建入口
 
-原版只在 Mac 构建，仍使用仓库根目录 `build.sh`，与本文 Tauri 入口不同：
+SwiftUI 版只在 Mac 构建，仍使用仓库根目录 `build.sh`，与本文 Tauri 入口不同。先准备 Python 3.12 环境和锁定依赖：
 
 ```sh
 # macOS，仓库根目录
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements-desktop.lock
 ./build.sh
 ```
 
-生成 `build/AirCard.app` 和 `build/AirCard.dmg`。脚本会先执行 `make clean`，清理整个 `build/`；如果需要同时保留 Tauri 安装包或本地验证产物，使用独立 checkout 或先保存这些产物。不要在 Windows 上用该脚本构建桌面客户端。
+生成当前架构的 `build/AirCard.app` 和 `build/AirCard.dmg`。脚本保留其他 `build/` 产物，并为 SwiftUI 应用冻结与本机架构匹配的事务后端。若要 Universal 应用，分别准备 arm64 与 x86_64 的 Python 环境，设置 `AIRCARD_PYTHON_ARM64`、`AIRCARD_PYTHON_X86_64` 及 `AIRCARD_SWIFT_ARCHES="arm64 x86_64"`。不要在 Windows 上用该脚本构建桌面客户端。

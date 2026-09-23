@@ -14,7 +14,7 @@
 - 🎨 **Custom Card Skins:** Assign custom artwork, textures, or bank logos to Apple Pay and Wallet cards.
 - ⚡ **Per-Card Customization:** Set and flash unique artwork for each card individually.
 - 📱 **Card Detection:** Select a card in your iPhone's Wallet app to identify its card identifier from Wallet resource paths.
-- 🚀 **100% Standalone (Universal):** Native support for both **Apple Silicon** and **Intel (x86)** Macs. All required device-communication utilities and image engines are pre-bundled inside the app.
+- 🚀 **Standalone macOS bundles:** Build on Apple Silicon or Intel; the matching device tools and image engine are bundled. A universal SwiftUI bundle can be made with both architecture-specific Python environments.
 - 📦 **Zero Prerequisites:** No Homebrew, Python packages, or terminal setup required for macOS users.
 
 ---
@@ -49,7 +49,7 @@ The isolated prototype remains available for diagnostics; card operations are
 implemented in the new desktop client.
 See [setup, commands, and device-test results](docs/windows-prototype.md).
 
-### macOS (Universal DMG)
+### macOS DMG
 1. Build this fork from source using the instructions below.
 2. Open **`build/AirCard.dmg`** and drag **`AirCard.app`** into your **Applications** folder.
 3. Fully compatible with both **Apple Silicon** and **Intel (x86)** Macs.
@@ -72,57 +72,36 @@ See [setup, commands, and device-test results](docs/windows-prototype.md).
    - **Double-click the Side (Power) button** to open Apple Pay.
    - Complete any unlock prompt on your iPhone.
    - **Tap your card** (or tap it once more) to trigger detection.
-4. Click **更换卡面** below a card and choose an image, or drag & drop an image onto it. AirCard Lite flashes that card automatically.
+4. Click **更换卡面** below a card, or drag an image onto it. Adjust the crop, generate a preview, then click **应用卡面** to write it to the iPhone.
 5. Force-close the **Wallet** app on your iPhone from the App Switcher (or reboot) to see your new custom card design!
 
 The scanner verifies each detected pass by reading its `pass.json`. It adds
 payment cards and Secure Element transit cards with `paymentCard` or
 `transitCard` metadata, and skips ordinary store cards, coupons, tickets, and
-other barcode passes. If the type cannot be verified, it is not added. Saved
-cards from older versions are checked and ordinary passes are removed when you
-start a scan. Verification takes longer than log detection because each file is
-backed up and restored on the device.
+other barcode passes. If the type cannot be verified, it is not added. Legacy
+card identifiers are retained as unassigned candidates; scan again with the
+connected iPhone to associate them with a device. Verification takes longer
+than log detection because each file is backed up and restored on the device.
 
-### Read & export card artwork
+### Read, back up, and restore card artwork
 
-Connect the iPhone and click **读取卡面** below a card to copy and cache all of
-its current artwork files. The preview appears on the card and remains available
-after restarting AirCard. Click the card to inspect the full-size image. A
-skin selected for flashing is displayed separately from the cached artwork.
+Click **读取卡面** to read the current card artwork. The first successful read
+(or the backup taken before the first change) is kept as a verified, immutable
+backup for that device and card. The detail sheet can export this first backup
+as a ZIP or restore it to the iPhone. A later read updates the displayed current
+artwork without replacing the first backup. The transaction engine tracks
+whether each of the three combined artwork files originally existed:
+`cardBackgroundCombined@3x.png`, `cardBackgroundCombined@2x.png`, and
+`cardBackgroundCombined.pdf`.
 
-Once a card has been read, the **export** button (arrow-up icon) becomes
-available: it saves a ZIP of every cached artwork file straight from the local
-cache, without contacting the device again. AirCard first reads the pass
-`manifest.json` to find its actual image files. It supports Apple's documented
-PNG resources (`artwork`, `strip`, `background`, `thumbnail`, `logo`,
-`primaryLogo`, `secondaryLogo`, `footer`, and `icon`), plus other safely named PNG
-resources listed in the manifest, including 1x/2x/3x and localized `.lproj`
-variants. If no usable manifest is available, it falls back
-to the existing combined artwork files: `cardBackgroundCombined@3x.png`,
-`cardBackgroundCombined@2x.png`, and `cardBackgroundCombined.pdf`. It puts every
-successfully read image in the ZIP with its relative path preserved. A component
-image is shown as a source image, not a reconstruction of the complete Wallet
-pass. The result lists files that were unavailable.
-An export fails if none can be read, or if writeback or recovery checks fail.
-File signatures are reported as a warning rather than blocking byte-for-byte
-exports.
-These are the files currently on the iPhone; if a skin was already applied,
-they may no longer be the card's factory artwork. Export before applying a skin
-to save the earlier design.
-
-AirTraffic moves each original file temporarily during reading. AirCard saves a
-checked copy in `~/Library/Application Support/AirCard/Recovery/` and writes a
-copy back to the card. Depending on the device, an extra original may remain
-in the iPhone's Media recovery area. The recovery record reports whether it
-was retained and records SHA-256 for each Mac backup. Keep the Mac recovery
-folder, and any retained iPhone copies, until you have checked the card in
-Wallet. AirTraffic can report a successful operation even when a device file
-did not move; a successful export cannot guarantee Wallet will display the
-same artwork without checking it on the iPhone.
-
-The UI cache is stored under `~/Library/Application Support/AirCard/ArtworkCache/`.
-Its files are checked against their saved SHA-256 hashes before display; the
-separate Recovery folder keeps the copies used to restore card resources.
+Before any write, AirCard saves and verifies a snapshot. If a device operation
+fails, it attempts to roll back the card and temporary Books files. If it
+cannot finish safely, reconnect the same iPhone and use **继续恢复**. Card changes
+remain unavailable for that device until recovery completes. The card records,
+first backups, and transaction state are under
+`~/Library/Application Support/AirCardDesktop/`. The earlier Swift backend's
+manifest-wide resource export code remains in the repository but is not exposed
+by the new SwiftUI transaction interface.
 
 ### If scanning finds no cards
 
@@ -161,18 +140,35 @@ After dependency installation and tests, run `pnpm package:backend`, then
 `--config src-tauri/tauri.macos.conf.json`. The full guide covers interpreter
 selection, architecture matching, output paths and installed-app validation.
 
-### Original SwiftUI app — macOS only
+### SwiftUI app — macOS only
 
-The following builds the original app. Its script cleans the entire `build/`
-directory first; use a separate checkout or preserve existing desktop artifacts.
+The SwiftUI app keeps its original native layout and now uses the same
+recoverable card-operation backend as the Windows/macOS desktop client. It has
+crop preview before applying, a verified first backup with restore, pending
+transaction recovery, device-bound cards, and language and appearance controls.
+The two macOS apps share `~/Library/Application Support/AirCardDesktop/` card
+records. Legacy Swift card identifiers are copied as unassigned candidates;
+rescan them with the connected iPhone to establish device ownership.
+
+Install Python 3.12 and the locked desktop dependencies before building:
 
 ```sh
 git clone https://github.com/Amethystos325/AirCard.git
 cd AirCard
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements-desktop.lock
 chmod +x build.sh
 ./build.sh
 ```
-This builds universal binaries (`arm64` + `x86_64`), bundles dependencies into `build/AirCard.app`, and outputs `build/AirCard.dmg`.
+This builds for the current Mac architecture and produces `build/AirCard.app`
+and `build/AirCard.dmg`. For a universal SwiftUI app, provide an arm64 and an
+x86_64 Python 3.12 environment with the locked dependencies on an Apple Silicon
+Mac with Rosetta, then set
+`AIRCARD_PYTHON_ARM64`, `AIRCARD_PYTHON_X86_64`, and
+`AIRCARD_SWIFT_ARCHES="arm64 x86_64"` when running `build.sh`. The app bundle
+includes one frozen backend per architecture. macOS card read, apply, restore,
+and recovery operations still require real-device validation on the target
+Mac/iOS build; a successful build does not establish device compatibility.
 
 ---
 

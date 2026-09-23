@@ -61,100 +61,101 @@ class Engine:
         if self.lock.locked():
             raise RuntimeError("BUSY")
         async with self.lock:
-            if self.store.pending(device):
-                raise RuntimeError("RECOVERY_REQUIRED")
-            if self.store.quarantined_card(device, card):
-                raise RuntimeError("CARD_QUARANTINED")
-            card_dir = self.store.card(device, card)
-            known = read(card_dir / "card.json", {})
-            if mode in ("apply", "restore") and known.get("kind") != "secure-element":
-                raise RuntimeError("CARD_NOT_CLASSIFIED")
-            desired = None
-            if mode == "apply":
-                if not isinstance(image_id, str) or len(image_id) != 32 or any(c not in "0123456789abcdef" for c in image_id):
-                    raise ValueError("INVALID_IMAGE")
-                desired = dict(build_card_assets((self.store.root / "prepared" / (image_id + ".png")).read_bytes()))
-            elif mode == "restore":
-                desired = self.load_manifest(card_dir / "original", device, card)
-            state = {"id": secrets.token_hex(16), "device": device, "deviceKey": identity(device),
-                     "card": card, "mode": mode, "status": "running", "originals": {}, "writeStarted": False}
-            self.active, self.cancel_requested = state, False
-            self.store.checkpoint(state)
-            transaction = self.store.root / "transactions" / state["id"]
-            result = {}
-            preview = None
-            try:
-                async with self.session_type(self.store, state) as session:
-                    try:
-                        self.progress("classifying")
-                        pass_data = await session.read("pkpass", "pass.json")
-                        kind = classify_pass_data(pass_data) if pass_data else "unknown"
-                        if kind != "secure-element" and mode != "classify":
-                            raise RuntimeError("CARD_NOT_CLASSIFIED")
-                        meta = {"card": card, "deviceKey": state["deviceKey"], "kind": kind,
-                                "label": self.card_label(pass_data)}
-                        if mode != "classify":
-                            self.progress("backingUp")
-                            names = [("pkpass", name) for name in sorted(ART)]
-                            if desired is not None:
-                                names += [(area, leaf) for area in ("cache", "pkcache") for leaf in sorted(CACHE)]
-                            for area, name in names:
-                                if self.cancel_requested:
-                                    raise RuntimeError("CANCELLED")
-                                data = await session.read(area, name)
-                                state["originals"][area + "/" + name] = self.store.blob(transaction / "before", area + "/" + name, data)
-                                self.store.checkpoint(state)
-                            originals = {name: self.store.load_blob(transaction / "before", state["originals"]["pkpass/" + name]) for name in ART}
-                            if not any(originals.values()):
-                                raise RuntimeError("ARTWORK_UNAVAILABLE")
-                            original_dir = card_dir / "original"
-                            if not (original_dir / "manifest.json").exists():
-                                manifest = {"deviceKey": state["deviceKey"], "card": card,
-                                            "assets": {name: self.store.blob(original_dir, name, data) for name, data in originals.items()}}
-                                save(original_dir / "manifest.json", manifest)
-                            # Revalidate the immutable backup before any new artwork write.
-                            self.load_manifest(original_dir, device, card)
-                            if desired is not None:
-                                if self.cancel_requested:
-                                    raise RuntimeError("CANCELLED")
-                                state["writeStarted"] = True
-                                self.store.checkpoint(state)
-                                self.progress("writing")
-                                for name in sorted(ART):
-                                    await session.write("pkpass", name, desired[name])
-                                self.progress("invalidating")
-                                for area in ("cache", "pkcache"):
-                                    for name in sorted(CACHE):
-                                        await session.write(area, name, None)
-                            selected = desired if desired is not None else originals
-                            preview = artwork_preview(selected)
-                        self.progress("cleaning")
-                        await session.finish()
-                        if preview:
-                            put(card_dir / "preview.png", preview)
-                        save(card_dir / "card.json", meta)
-                        state["status"] = "complete"
-                        result = {"card": meta, "operationId": state["id"]}
-                    except BaseException:
-                        self.progress("recovering")
-                        try:
-                            await session.recover_pending()
-                            if state["writeStarted"]:
-                                await self.rollback(session, state)
-                            await session.finish()
-                            state["status"] = "rolled_back"
-                        except BaseException:
-                            state["status"] = "needs_recovery"
-                        raise
-            except BaseException:
-                if state["status"] == "running":
-                    state["status"] = "needs_recovery"
-                raise
-            finally:
+            with self.store.operation_lock():
+                if self.store.pending(device):
+                    raise RuntimeError("RECOVERY_REQUIRED")
+                if self.store.quarantined_card(device, card):
+                    raise RuntimeError("CARD_QUARANTINED")
+                card_dir = self.store.card(device, card)
+                known = read(card_dir / "card.json", {})
+                if mode in ("apply", "restore") and known.get("kind") != "secure-element":
+                    raise RuntimeError("CARD_NOT_CLASSIFIED")
+                desired = None
+                if mode == "apply":
+                    if not isinstance(image_id, str) or len(image_id) != 32 or any(c not in "0123456789abcdef" for c in image_id):
+                        raise ValueError("INVALID_IMAGE")
+                    desired = dict(build_card_assets((self.store.root / "prepared" / (image_id + ".png")).read_bytes()))
+                elif mode == "restore":
+                    desired = self.load_manifest(card_dir / "original", device, card)
+                state = {"id": secrets.token_hex(16), "device": device, "deviceKey": identity(device),
+                         "card": card, "mode": mode, "status": "running", "originals": {}, "writeStarted": False}
+                self.active, self.cancel_requested = state, False
                 self.store.checkpoint(state)
-                self.active = None
-                self.emit({"event": "changed"})
-            return result
+                transaction = self.store.root / "transactions" / state["id"]
+                result = {}
+                preview = None
+                try:
+                    async with self.session_type(self.store, state) as session:
+                        try:
+                            self.progress("classifying")
+                            pass_data = await session.read("pkpass", "pass.json")
+                            kind = classify_pass_data(pass_data) if pass_data else "unknown"
+                            if kind != "secure-element" and mode != "classify":
+                                raise RuntimeError("CARD_NOT_CLASSIFIED")
+                            meta = {"card": card, "deviceKey": state["deviceKey"], "kind": kind,
+                                    "label": self.card_label(pass_data)}
+                            if mode != "classify":
+                                self.progress("backingUp")
+                                names = [("pkpass", name) for name in sorted(ART)]
+                                if desired is not None:
+                                    names += [(area, leaf) for area in ("cache", "pkcache") for leaf in sorted(CACHE)]
+                                for area, name in names:
+                                    if self.cancel_requested:
+                                        raise RuntimeError("CANCELLED")
+                                    data = await session.read(area, name)
+                                    state["originals"][area + "/" + name] = self.store.blob(transaction / "before", area + "/" + name, data)
+                                    self.store.checkpoint(state)
+                                originals = {name: self.store.load_blob(transaction / "before", state["originals"]["pkpass/" + name]) for name in ART}
+                                if not any(originals.values()):
+                                    raise RuntimeError("ARTWORK_UNAVAILABLE")
+                                original_dir = card_dir / "original"
+                                if not (original_dir / "manifest.json").exists():
+                                    manifest = {"deviceKey": state["deviceKey"], "card": card,
+                                                "assets": {name: self.store.blob(original_dir, name, data) for name, data in originals.items()}}
+                                    save(original_dir / "manifest.json", manifest)
+                                # Revalidate the immutable backup before any new artwork write.
+                                self.load_manifest(original_dir, device, card)
+                                if desired is not None:
+                                    if self.cancel_requested:
+                                        raise RuntimeError("CANCELLED")
+                                    state["writeStarted"] = True
+                                    self.store.checkpoint(state)
+                                    self.progress("writing")
+                                    for name in sorted(ART):
+                                        await session.write("pkpass", name, desired[name])
+                                    self.progress("invalidating")
+                                    for area in ("cache", "pkcache"):
+                                        for name in sorted(CACHE):
+                                            await session.write(area, name, None)
+                                selected = desired if desired is not None else originals
+                                preview = artwork_preview(selected)
+                            self.progress("cleaning")
+                            await session.finish()
+                            if preview:
+                                put(card_dir / "preview.png", preview)
+                            save(card_dir / "card.json", meta)
+                            state["status"] = "complete"
+                            result = {"card": meta, "operationId": state["id"]}
+                        except BaseException:
+                            self.progress("recovering")
+                            try:
+                                await session.recover_pending()
+                                if state["writeStarted"]:
+                                    await self.rollback(session, state)
+                                await session.finish()
+                                state["status"] = "rolled_back"
+                            except BaseException:
+                                state["status"] = "needs_recovery"
+                            raise
+                except BaseException:
+                    if state["status"] == "running":
+                        state["status"] = "needs_recovery"
+                    raise
+                finally:
+                    self.store.checkpoint(state)
+                    self.active = None
+                    self.emit({"event": "changed"})
+                return result
 
     @staticmethod
     def card_label(data):
@@ -183,23 +184,24 @@ class Engine:
         if len(operation_id) != 32 or any(c not in "0123456789abcdef" for c in operation_id):
             raise ValueError("INVALID_REQUEST")
         async with self.lock:
-            state = read(self.store.root / "transactions" / operation_id / "state.json")
-            if not state or state["status"] in ("complete", "rolled_back"):
-                raise ValueError("INVALID_REQUEST")
-            self.active = state
-            try:
-                self.progress("recovering")
-                async with self.session_type(self.store, state) as session:
-                    await session.recover_pending()
-                    if state["writeStarted"]:
-                        await self.rollback(session, state)
-                    await session.finish()
-                state["status"] = "rolled_back"
-                self.store.checkpoint(state)
-                return {"recovered": True}
-            finally:
-                self.active = None
-                self.emit({"event": "changed"})
+            with self.store.operation_lock():
+                state = read(self.store.root / "transactions" / operation_id / "state.json")
+                if not state or state["status"] in ("complete", "rolled_back"):
+                    raise ValueError("INVALID_REQUEST")
+                self.active = state
+                try:
+                    self.progress("recovering")
+                    async with self.session_type(self.store, state) as session:
+                        await session.recover_pending()
+                        if state["writeStarted"]:
+                            await self.rollback(session, state)
+                        await session.finish()
+                    state["status"] = "rolled_back"
+                    self.store.checkpoint(state)
+                    return {"recovered": True}
+                finally:
+                    self.active = None
+                    self.emit({"event": "changed"})
 
     def export(self, device_key, card, destination):
         if not isinstance(device_key, str) or len(device_key) != 64 or any(c not in "0123456789abcdef" for c in device_key):
