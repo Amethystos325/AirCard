@@ -21,6 +21,15 @@
 
 ## Installation
 
+### Windows (experimental prototype)
+
+A Windows diagnostic prototype is available. USB pairing, unified logs, AFC
+test-file operations, StreamingZip staging, Grappa authentication, and AirTraffic
+sync readiness have been tested. A disposable file outside Media completed the
+write, readback, restore, second readback, and cleanup cycle on a real iPhone.
+**Windows card skinning is not supported yet**.
+See [setup, commands, and device-test results](docs/windows-prototype.md).
+
 ### macOS (Universal DMG)
 1. Build this fork from source using the instructions below.
 2. Open **`build/AirCard.dmg`** and drag **`AirCard.app`** into your **Applications** folder.

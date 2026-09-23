@@ -1,0 +1,4 @@
+# Prototype only; keep separate from the macOS application runtime.
+# Python 3.12 has Windows wheels for the transitive lzfse dependency.
+pymobiledevice3==11.17.0
+pefile==2024.8.26
