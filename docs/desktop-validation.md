@@ -1,6 +1,7 @@
-# AirCard Desktop 验证记录
+# DittoCard 验证记录
 
 本项目使用本地测试、构建和安装验收，不使用 GitHub Actions / CI。复现步骤见 `../desktop/README.md`；各平台结果仅由对应本地环境的实际执行确认。
+以下旧产物记录保留构建时的 `AirCard Desktop` 文件名与校验值；新构建的产品名为 `DittoCard`。
 
 日期：2026-09-23。Windows 11 x64，iPhone14,2，iOS 27.0 / 24A437。唯一更换测试卡片：用户明确指定的 Suica（卡片元数据为 JR 东日本）。不记录设备序列号或卡片标识。
 

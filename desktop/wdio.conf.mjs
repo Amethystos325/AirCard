@@ -1,7 +1,7 @@
 import { resolve, dirname, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-const application = process.env.AIRCARD_E2E_BINARY || resolve(`src-tauri/target/release/aircard-desktop${process.platform === 'win32' ? '.exe' : ''}`);
+const application = process.env.AIRCARD_E2E_BINARY || resolve(`src-tauri/target/release/DittoCard${process.platform === 'win32' ? '.exe' : ''}`);
 async function waitForBackendExit() {
   const backendPath = join(dirname(application), 'backend').replaceAll('\\', '/').toLowerCase();
   const deadline = Date.now() + 60000;

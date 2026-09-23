@@ -1,10 +1,10 @@
-# AirCard Desktop — 测试版
+# DittoCard — 双端测试版
 
 Tauri 2、React、TypeScript 和独立 Python 3.12 后端。原有 SwiftUI 应用及根目录 `build.sh` 继续保留。
 
 ## 使用
 
-1. Windows 11 x64 安装 Microsoft Store 版 iTunes，打开软件确认电脑已信任 iPhone。当前 Windows 运行库适配验证的是 Store iTunes；仅安装“Apple 设备”的配置尚未验收。AirCard 不分发 Apple DLL。
+1. Windows 11 x64 安装 Microsoft Store 版 iTunes，打开软件确认电脑已信任 iPhone。当前 Windows 运行库适配验证的是 Store iTunes；仅安装“Apple 设备”的配置尚未验收。DittoCard 不分发 Apple DLL。
 2. 安装生成的 NSIS 包，连接并解锁手机，点击“扫描卡片”，在 Wallet 中切换目标卡片。
 3. 停止扫描，选择已分类卡片，读取卡面。首次备份按设备和卡片隔离，包含原有缺失文件状态。
 4. 选图、调整位置和缩放、生成预览，最后点击“应用卡面”。选图不会修改手机。

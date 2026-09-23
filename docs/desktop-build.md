@@ -1,4 +1,4 @@
-# AirCard Desktop：依赖与双端本地构建
+# DittoCard：依赖与双端本地构建
 
 本文适用于 `desktop/` 下的 Tauri 2 + React + TypeScript + Python 桌面客户端。所有测试、打包和安装验收均在本地完成，不使用 GitHub Actions / CI。Windows 已完成本机构建和 Suica 真机验证；macOS 27 arm64 已完成本机构建、启动与设备自动发现，Intel 构建和 iPhone 卡片流程仍待执行，详见[验证记录](desktop-validation.md)。
 
@@ -14,10 +14,10 @@
 ### Windows 的 Apple 组件
 
 1. 安装 [Microsoft Store 版 iTunes](https://apps.microsoft.com/detail/9pb2mz1zmb1s)，并打开一次。
-2. 用 USB 连接 iPhone，保持解锁，在手机上确认“信任此电脑”。先确认 iTunes 能打开手机的设备页面，再启动 AirCard。
+2. 用 USB 连接 iPhone，保持解锁，在手机上确认“信任此电脑”。先确认 iTunes 能打开手机的设备页面，再启动 DittoCard。
 3. 若安装驱动后仍不能连接，重新插拔 USB；安装程序要求重启时，先重启 Windows。
 
-本项目验证的是 Store iTunes 的组件布局。仅安装“Apple 设备”（Apple Devices）、传统桌面 iTunes、Windows ARM64 的配置均未验收，不能据此保证可用。AirCard 从用户安装的 iTunes 发现 Apple DLL 和 CoreFP 依赖，复制到 `%LOCALAPPDATA%/AirCardDesktop/runtime/` 供隔离 worker 使用；安装包不分发 Apple DLL，也不要求手工复制 DLL、修改注册表或使用仓库 `.tmp` 目录。
+本项目验证的是 Store iTunes 的组件布局。仅安装“Apple 设备”（Apple Devices）、传统桌面 iTunes、Windows ARM64 的配置均未验收，不能据此保证可用。DittoCard 从用户安装的 iTunes 发现 Apple DLL 和 CoreFP 依赖，复制到 `%LOCALAPPDATA%/AirCardDesktop/runtime/` 供隔离 worker 使用；安装包不分发 Apple DLL，也不要求手工复制 DLL、修改注册表或使用仓库 `.tmp` 目录。
 
 排查 Apple Mobile Device Service 状态可在 PowerShell 中执行：
 
@@ -25,7 +25,7 @@
 Get-Service -DisplayName 'Apple Mobile Device Service' -ErrorAction SilentlyContinue
 ```
 
-无结果表示未找到该服务；请检查 iTunes 安装及其设备组件。配对超时、未信任或锁定时，先检查手机解锁状态、信任提示和 iTunes 设备页。若 AirCard 已显示待恢复任务，重连后先继续恢复。
+无结果表示未找到该服务；请检查 iTunes 安装及其设备组件。配对超时、未信任或锁定时，先检查手机解锁状态、信任提示和 iTunes 设备页。若 DittoCard 已显示待恢复任务，重连后先继续恢复。
 
 USB 连接成功不代表允许写入。当前桌面客户端沿用 iOS 27.0、build `24A435` / `24A437` / `24A5390f` 的兼容门槛。
 
@@ -85,8 +85,8 @@ Python 版本检查应显示 `3.12.x 64`，Rust host 应为 `x86_64-pc-windows-m
 
 产物（相对于仓库根目录）：
 
-- 安装包：`desktop/src-tauri/target/release/bundle/nsis/AirCard Desktop_0.2.0_x64-setup.exe`，版本号会随项目版本变化。
-- 桌面程序：`desktop/src-tauri/target/release/aircard-desktop.exe`。
+- 安装包：`desktop/src-tauri/target/release/bundle/nsis/DittoCard_0.2.0_x64-setup.exe`，版本号会随项目版本变化。
+- 桌面程序：`desktop/src-tauri/target/release/DittoCard.exe`。
 - 冻结后端：`build/desktop-backend/aircard-backend/`；打包脚本将其复制到 `desktop/src-tauri/binaries/backend/` 作为应用资源。
 
 交付 NSIS 安装包。单独复制桌面 exe 或后端 exe 会遗漏资源；后端必须保留完整目录结构。
@@ -200,4 +200,4 @@ python3.12 -m venv .venv
 ./build.sh
 ```
 
-生成当前架构的 `build/AirCard.app` 和 `build/AirCard.dmg`。脚本保留其他 `build/` 产物，并为 SwiftUI 应用冻结与本机架构匹配的事务后端。若要 Universal 应用，分别准备 arm64 与 x86_64 的 Python 环境，设置 `AIRCARD_PYTHON_ARM64`、`AIRCARD_PYTHON_X86_64` 及 `AIRCARD_SWIFT_ARCHES="arm64 x86_64"`。不要在 Windows 上用该脚本构建桌面客户端。
+生成当前架构的 `build/DittoCard.app` 和 `build/DittoCard.dmg`。脚本保留其他 `build/` 产物，并为 SwiftUI 应用冻结与本机架构匹配的事务后端。若要 Universal 应用，分别准备 arm64 与 x86_64 的 Python 环境，设置 `AIRCARD_PYTHON_ARM64`、`AIRCARD_PYTHON_X86_64` 及 `AIRCARD_SWIFT_ARCHES="arm64 x86_64"`。不要在 Windows 上用该脚本构建桌面客户端。

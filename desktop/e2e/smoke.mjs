@@ -9,15 +9,16 @@ describe('Installed desktop shell', () => {
   });
   it('loads the packaged backend, switches language and theme', async () => {
     await $('h1').waitForDisplayed();
-    await expect($('h1')).toHaveText('AirCard Lite');
     await $('summary').click();
     // The embedded driver changes native select values without dispatching change.
     // Dispatch the same DOM event used by the browser after choosing an option.
     await browser.execute(() => { const select = document.querySelector('select'); select.value = 'zh'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    await expect($('h1')).toHaveText('百变卡片');
     await expect($('h2')).toHaveText(expect.stringContaining('卡片'));
     await browser.execute(() => { const select = document.querySelector('select[aria-label="外观"]'); select.value = 'dark'; select.dispatchEvent(new Event('change', { bubbles: true })); });
     await expect($('html')).toHaveAttribute('data-theme', 'dark');
     await browser.execute(() => { const select = document.querySelector('select[aria-label="语言"]'); select.value = 'en'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    await expect($('h1')).toHaveText('Ditto Card');
     await expect($('main')).toHaveAttribute('aria-label', 'Cards');
     const result = await browser.tauri.execute(async () => {
       const api = window.__TAURI__;

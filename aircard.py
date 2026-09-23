@@ -21,7 +21,7 @@ from pathlib import Path
 script_dir = Path(__file__).resolve().parent
 for bin_path in [
     str(script_dir / "bin"),
-    "/Applications/AirCard.app/Contents/Resources/bin",
+    "/Applications/DittoCard.app/Contents/Resources/bin",
     "/opt/homebrew/bin",
     "/usr/local/bin",
     "/usr/bin",

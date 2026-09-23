@@ -8,7 +8,7 @@ import styles from './App.module.css';
 
 async function exportCard(card: Card, run: ReturnType<typeof useApp>['run'], title: string) {
   if (demo) return;
-  const path = await save({ title, defaultPath: 'AirCard-backup.zip', filters: [{ name: 'ZIP', extensions: ['zip'] }] });
+  const path = await save({ title, defaultPath: 'DittoCard-backup.zip', filters: [{ name: 'ZIP', extensions: ['zip'] }] });
   if (path) await run('card.export', { card: card.card, deviceKey: card.deviceKey, destination: path });
 }
 const cardKey = (card: Card) => `${card.deviceKey}:${card.card}`;
@@ -46,7 +46,7 @@ export default function App() {
   }
   return <div className={styles.app}>
     <header className={styles.header}>
-      <div className={styles.brand}><span className={styles.brandIcon}><CreditCard size={23}/></span><div><div className={styles.brandTitle}><h1>AirCard Lite</h1><span className={styles.version}>v0.2</span></div><p>{t('subtitle')}</p></div></div>
+      <div className={styles.brand}><span className={styles.brandIcon}><CreditCard size={23}/></span><div className={styles.brandTitle}><h1>{state.language === 'en' ? 'Ditto Card' : '百变卡片'}</h1><span className={styles.version}>v0.2</span></div></div>
       <div className={styles.device} title={state.device ? `${state.device.product} · iOS ${state.device.version} · ${state.device.build}` : t('offlineHint')} aria-live="polite"><i data-connected={!!state.device}/><div>{state.device ? <><strong>{state.device.name}</strong><p>{state.device.product} · iOS {state.device.version}</p></> : <span>{t('offline')}</span>}</div><button className={styles.iconButton} aria-label={t('refresh')} disabled={state.busy || state.scanning} onClick={() => void run('device')}><RefreshCw size={13}/></button></div>
       <button className={`${styles.scanButton} ${state.scanning ? styles.stopButton : ''}`} disabled={!state.scanning && blocked} onClick={() => void run(state.scanning ? 'scan.stop' : 'scan.start', { device: state.device?.id })}>{state.scanning ? <LoaderCircle className={styles.spin} size={17}/> : <Radio size={17}/>}<span>{t(state.scanning ? 'stopScan' : 'scan')}</span></button>
       <details className={styles.settings}><summary aria-label={t('preferences')} title={t('preferences')}><Settings size={17}/></summary><div className={styles.preferences}><label>{t('language')}<select aria-label={t('language')} value={state.language} onChange={e => dispatch({ type: 'patch', value: { language: e.target.value as 'zh' | 'en' } })}><option value="zh">简体中文</option><option value="en">English</option></select></label><label>{t('settings')}<select aria-label={t('settings')} value={state.theme} onChange={e => dispatch({ type: 'patch', value: { theme: e.target.value } })}>{['system', 'light', 'dark'].map(v => <option key={v} value={v}>{t(v)}</option>)}</select></label></div></details>
@@ -122,7 +122,7 @@ function Details({ card, initialPath, close }: { card: Card; initialPath?: strin
   }, [state.busy]);
   async function choose() { if (demo) return; const path = await open({ title: t('fileDialog'), multiple: false, filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] }); if (path) await load(path); }
   async function generate() { setPreparing(true); try { const result = await run('image.prepare', { path: source, crop }); if (result) setPrepared(result); } finally { setPreparing(false); } }
-  async function exportBackup() { if (demo) return; const path = await save({ title: t('exportDialog'), defaultPath: 'AirCard-backup.zip', filters: [{ name: 'ZIP', extensions: ['zip'] }] }); if (path) await run('card.export', { card: card.card, deviceKey: card.deviceKey, destination: path }); }
+  async function exportBackup() { if (demo) return; const path = await save({ title: t('exportDialog'), defaultPath: 'DittoCard-backup.zip', filters: [{ name: 'ZIP', extensions: ['zip'] }] }); if (path) await run('card.export', { card: card.card, deviceKey: card.deviceKey, destination: path }); }
   return <dialog className={styles.dialog} ref={dialog} onCancel={e => { e.preventDefault(); close(); }}>
     <div className={styles.dialogHeading}><div><small>WALLET / {t('card')}</small><h2>{card.label || t('card')}</h2></div><button aria-label={t('close')} className={styles.iconButton} onClick={close}><X size={21}/></button></div>
     <div className={styles.previews}><section><h3>{t('original')}</h3><div className={styles.preview}>{card.preview ? <img src={card.preview} alt={t('original')}/> : <span><CreditCard/><small>{t('noArtwork')}</small></span>}</div><button disabled={disabled} onClick={() => void run('card.read', { device: state.device?.id, card: card.card })}><RefreshCw size={14}/>{t('read')}</button></section><section><h3>{t('replacement')}</h3><button className={styles.preview} disabled={state.busy || preparing} onClick={() => void choose()} aria-label={t('choose')}>{prepared ? <img src={prepared.preview} alt={t('replacement')}/> : raw ? <img src={raw} alt={t('replacement')} style={{ position: 'absolute', maxWidth: 'none', width: `${100 / width}%`, height: `${100 / height}%`, left: `${-crop.x / width * 100}%`, top: `${-crop.y / height * 100}%` }}/> : <span><ImagePlus/><small>{t('drop')}</small></span>}</button><button disabled={state.busy || preparing} onClick={() => void choose()}><Plus size={14}/>{t('choose')}</button></section></div>

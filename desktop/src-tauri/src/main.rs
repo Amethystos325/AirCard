@@ -84,5 +84,5 @@ fn main() {
                 }
             }
         })
-        .run(tauri::generate_context!()).expect("AirCard failed to start");
+        .run(tauri::generate_context!()).expect("DittoCard failed to start");
 }

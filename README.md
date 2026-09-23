@@ -1,4 +1,4 @@
-# AirCard Lite 🎴
+# DittoCard 🎴
 
 > **Apple Wallet Card Skinner for iOS 18+ (No Jailbreak Required)**
 > **Tested on iOS 27 release.**
@@ -51,23 +51,23 @@ See [setup, commands, and device-test results](docs/windows-prototype.md).
 
 ### macOS DMG
 1. Build this fork from source using the instructions below.
-2. Open **`build/AirCard.dmg`** and drag **`AirCard.app`** into your **Applications** folder.
-3. Fully compatible with both **Apple Silicon** and **Intel (x86)** Macs.
+2. Open **`build/DittoCard.dmg`** and drag **`DittoCard.app`** into your **Applications** folder.
+3. Use a build matching your Mac's architecture (**Apple Silicon** or **Intel**).
 
 > [!NOTE]
 > **First Launch on macOS (Gatekeeper):**
 > If macOS displays an unidentified developer prompt on first launch:
-> - **Method 1 (UI):** Right-click (or Control-click) `AirCard.app` in Applications ➔ click **Open** ➔ click **Open**.
+> - **Method 1 (UI):** Right-click (or Control-click) `DittoCard.app` in Applications ➔ click **Open** ➔ click **Open**.
 > - **Method 2 (Terminal):**
 >   ```sh
->   sudo xattr -cr /Applications/AirCard.app
+>   sudo xattr -cr /Applications/DittoCard.app
 >   ```
 
 ---
 
 ## How to Customize Apple Wallet Cards
 1. Connect your iPhone to your Mac via USB cable and ensure it is unlocked and trusted.
-2. In AirCard, click **Scan Cards**.
+2. In DittoCard, click **Scan Cards**.
 3. On your iPhone:
    - **Double-click the Side (Power) button** to open Apple Pay.
    - Complete any unlock prompt on your iPhone.
@@ -94,7 +94,7 @@ whether each of the three combined artwork files originally existed:
 `cardBackgroundCombined@3x.png`, `cardBackgroundCombined@2x.png`, and
 `cardBackgroundCombined.pdf`.
 
-Before any write, AirCard saves and verifies a snapshot. If a device operation
+Before any write, DittoCard saves and verifies a snapshot. If a device operation
 fails, it attempts to roll back the card and temporary Books files. If it
 cannot finish safely, reconnect the same iPhone and use **继续恢复**. Card changes
 remain unavailable for that device until recovery completes. The card records,
@@ -117,7 +117,7 @@ that iOS replaces with `<private>` cannot be recovered by the scanner.
 
 If your device previously connected but scanning found zero cards, please try
 this build and report whether it helps. Include your iPhone model, iOS version,
-macOS version, and the AirCard version or commit tested. Avoid posting full
+macOS version, and the DittoCard version or commit tested. Avoid posting full
 device logs or card identifiers. See [scanner validation](docs/wallet-card-detection.md)
 for the verified environment and remaining coverage.
 
@@ -160,8 +160,8 @@ python3.12 -m venv .venv
 chmod +x build.sh
 ./build.sh
 ```
-This builds for the current Mac architecture and produces `build/AirCard.app`
-and `build/AirCard.dmg`. For a universal SwiftUI app, provide an arm64 and an
+This builds for the current Mac architecture and produces `build/DittoCard.app`
+and `build/DittoCard.dmg`. For a universal SwiftUI app, provide an arm64 and an
 x86_64 Python 3.12 environment with the locked dependencies on an Apple Silicon
 Mac with Rosetta, then set
 `AIRCARD_PYTHON_ARM64`, `AIRCARD_PYTHON_X86_64`, and
@@ -184,7 +184,7 @@ Mac/iOS build; a successful build does not establish device compatibility.
 
 ## Support
 
-If you find AirCard useful, you can support future development:
+If you find DittoCard useful, you can support future development:
 
 - **PayPal**: [Donate via PayPal](https://www.paypal.com/donate/?hosted_button_id=98QRTC2HFRA4Y)
 - **TON**: `UQBm9KPhtMw-XVVjirUoa09wzrlyWsbeZhKfefl1Uw-qNZ-r`

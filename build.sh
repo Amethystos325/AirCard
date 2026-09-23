@@ -7,7 +7,7 @@ cd "$SCRIPT_DIR"
 echo "==> [1/6] Building universal helper binaries (device_helper & airtraffic_host)..."
 make all
 
-APP_NAME="AirCard"
+APP_NAME="DittoCard"
 APP_DIR="build/${APP_NAME}.app"
 CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
@@ -17,7 +17,7 @@ LIB_DIR="${RESOURCES_DIR}/lib"
 
 echo "==> [2/6] Scaffolding ${APP_NAME}.app bundle structure..."
 rm -rf "$APP_DIR"
-mkdir -p "$MACOS_DIR" "$BIN_DIR" "$LIB_DIR"
+mkdir -p "$MACOS_DIR" "$BIN_DIR" "$LIB_DIR" "${RESOURCES_DIR}/zh-Hans.lproj"
 
 # Write Info.plist
 cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
@@ -28,15 +28,15 @@ cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>AirCard</string>
+    <string>DittoCard</string>
     <key>CFBundleIdentifier</key>
     <string>com.mak5er.aircard</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>AirCard Lite</string>
+    <string>DittoCard</string>
     <key>CFBundleDisplayName</key>
-    <string>AirCard Lite</string>
+    <string>DittoCard</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundlePackageType</key>
@@ -55,11 +55,23 @@ cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
 </plist>
 EOF
 
+cat << 'EOF' > "${RESOURCES_DIR}/zh-Hans.lproj/InfoPlist.strings"
+"CFBundleDisplayName" = "DittoCard";
+"CFBundleName" = "DittoCard";
+EOF
+
 echo "==> [3/6] Bundling universal tools & libraries..."
-# Copy App Icon
-if [ -f "dmg_assets/AppIcon.icns" ]; then
-    cp "dmg_assets/AppIcon.icns" "${RESOURCES_DIR}/AppIcon.icns"
-fi
+# Generate the macOS icon from the same PNG used in the Swift header.
+ICONSET_DIR="$SCRIPT_DIR/build/BrandIcon.iconset"
+rm -rf "$ICONSET_DIR"
+mkdir -p "$ICONSET_DIR"
+for point in 16 32 128 256 512; do
+    sips -z "$point" "$point" "dmg_assets/BrandIcon.png" --out "$ICONSET_DIR/icon_${point}x${point}.png" >/dev/null
+    doubled=$((point * 2))
+    sips -z "$doubled" "$doubled" "dmg_assets/BrandIcon.png" --out "$ICONSET_DIR/icon_${point}x${point}@2x.png" >/dev/null
+done
+iconutil --convert icns --output "${RESOURCES_DIR}/AppIcon.icns" "$ICONSET_DIR"
+cp "dmg_assets/BrandIcon.png" "${RESOURCES_DIR}/BrandIcon.png"
 
 # Copy universal device_helper and airtraffic_host. Device discovery and log
 # streaming both run through device_helper, which talks to MobileDevice.framework
@@ -114,15 +126,15 @@ outputs=()
 for arch in $SWIFT_ARCHES; do
     swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target "$arch-apple-macosx14.0" \
         AirCardApp.swift SwiftCardModel.swift SwiftDesktopBridge.swift SwiftAppLifecycle.swift \
-        -o "build/AirCard_$arch"
-    outputs+=("build/AirCard_$arch")
+        -o "build/${APP_NAME}_$arch"
+    outputs+=("build/${APP_NAME}_$arch")
 done
 if [ "${#outputs[@]}" -eq 1 ]; then
-    cp "${outputs[0]}" "${MACOS_DIR}/AirCard"
+    cp "${outputs[0]}" "${MACOS_DIR}/${APP_NAME}"
 else
-    lipo -create -output "${MACOS_DIR}/AirCard" "${outputs[@]}"
+    lipo -create -output "${MACOS_DIR}/${APP_NAME}" "${outputs[@]}"
 fi
-chmod +x "${MACOS_DIR}/AirCard"
+chmod +x "${MACOS_DIR}/${APP_NAME}"
 
 echo "==> [5/6] Setting permissions and signing ${APP_NAME}.app bundle..."
 chmod -R 755 "$APP_DIR"
@@ -130,7 +142,7 @@ xattr -cr "$APP_DIR" 2>/dev/null || true
 codesign --force --deep --sign - "$APP_DIR"
 
 echo "==> [6/6] Generating styled DMG (${APP_NAME}.dmg)..."
-DMG_STAGING="/tmp/aircard_dmg_staging"
+DMG_STAGING="/tmp/dittocard_dmg_staging"
 rm -rf "$DMG_STAGING"
 mkdir -p "$DMG_STAGING"
 cp -R "$APP_DIR" "$DMG_STAGING/"
@@ -139,13 +151,13 @@ rm -f "build/${APP_NAME}.dmg"
 
 if command -v create-dmg >/dev/null 2>&1; then
     create-dmg \
-        --volname "AirCard" \
+        --volname "$APP_NAME" \
         --background "dmg_assets/background_700.png" \
         --window-pos 200 120 \
         --window-size 700 460 \
         --icon-size 110 \
-        --icon "AirCard.app" 175 220 \
-        --hide-extension "AirCard.app" \
+        --icon "${APP_NAME}.app" 175 220 \
+        --hide-extension "${APP_NAME}.app" \
         --app-drop-link 525 220 \
         --add-file "README.txt" "dmg_assets/README.txt" 350 360 \
         --filesystem APFS \
@@ -154,7 +166,7 @@ if command -v create-dmg >/dev/null 2>&1; then
         "$DMG_STAGING"
 else
     ln -s /Applications "$DMG_STAGING/Applications"
-    hdiutil create -volname "AirCard" -srcfolder "$DMG_STAGING" -ov -format UDZO "build/${APP_NAME}.dmg"
+    hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING" -ov -format UDZO "build/${APP_NAME}.dmg"
 fi
 
 echo "============================================================"

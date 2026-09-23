@@ -5,6 +5,81 @@ import UniformTypeIdentifiers
 
 // MARK: - Card View Component (Apple Wallet Style)
 
+private enum CardFaceGeometry {
+    static let width: CGFloat = 290
+    static let height: CGFloat = 182
+    static let corner: CGFloat = 18
+}
+
+private struct CardFaceArtwork: View {
+    let image: NSImage
+    let fitsInsideCard: Bool
+
+    @ViewBuilder var body: some View {
+        if fitsInsideCard {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(NSColor.controlBackgroundColor))
+        } else {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+        }
+    }
+}
+
+private struct CardFaceFinish: ViewModifier {
+    let hasArtwork: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .clipShape(RoundedRectangle(cornerRadius: CardFaceGeometry.corner, style: .continuous))
+            .overlay {
+                if hasArtwork {
+                    LinearGradient(colors: [.white.opacity(0.14), .clear, .black.opacity(0.10)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                        .clipShape(RoundedRectangle(cornerRadius: CardFaceGeometry.corner, style: .continuous))
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+}
+
+private struct CardFaceHover: ViewModifier {
+    @State private var isHovered = false
+    @State private var pointer: CGSize = .zero
+
+    func body(content: Content) -> some View {
+        let maxTilt = 9.0
+        return content
+            .contentShape(RoundedRectangle(cornerRadius: CardFaceGeometry.corner, style: .continuous))
+            .scaleEffect(isHovered ? 1.03 : 1.0)
+            .rotation3DEffect(.degrees(Double(-pointer.height) * maxTilt),
+                              axis: (x: 1, y: 0, z: 0), perspective: 0.6)
+            .rotation3DEffect(.degrees(Double(pointer.width) * maxTilt),
+                              axis: (x: 0, y: 1, z: 0), perspective: 0.6)
+            .shadow(color: .black.opacity(isHovered ? 0.28 : 0.12),
+                    radius: isHovered ? 16 : 6,
+                    x: pointer.width * 10,
+                    y: isHovered ? 10 - pointer.height * 10 : 3)
+            .animation(.spring(response: 0.35, dampingFraction: 0.7), value: pointer)
+            .animation(.spring(response: 0.35, dampingFraction: 0.7), value: isHovered)
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let location):
+                    isHovered = true
+                    pointer = CGSize(width: location.x / CardFaceGeometry.width - 0.5,
+                                     height: location.y / CardFaceGeometry.height - 0.5)
+                case .ended:
+                    isHovered = false
+                    pointer = .zero
+                }
+            }
+    }
+}
+
 struct WalletCardView: View {
     @Binding var card: CardItem
     let cardIndex: Int
@@ -12,23 +87,17 @@ struct WalletCardView: View {
     let onPickImage: () -> Void
     let onClearImage: () -> Void
     let onRead: () -> Void
-    let onExport: () -> Void
     let onImageDropped: (URL) -> Void
     let onViewLarge: () -> Void
     let onDelete: () -> Void
     let readDisabled: Bool
     let isReading: Bool
-    let isExporting: Bool
     let imageChangeDisabled: Bool
 
-    private static let cardCorner: CGFloat = 18
+    private static let cardCorner = CardFaceGeometry.corner
     private func t(_ zh: String, _ en: String) -> String { language == "en" ? en : zh }
 
-    @State private var isHovered = false
     @State private var isTargeted = false
-    @State private var copied = false
-    // Normalized pointer position within the card (-0.5 ... 0.5) for the tilt.
-    @State private var pointer: CGSize = .zero
     // Drives the sweeping scan shimmer while reading (-1 ... 1).
     @State private var scanX: CGFloat = -1
 
@@ -61,35 +130,15 @@ struct WalletCardView: View {
     // MARK: Card artwork with holographic hover tilt
 
     private var cardVisual: some View {
-        let maxTilt = 9.0
         return ZStack {
             if let img = displayImage {
-                if componentName != nil {
-                    Image(nsImage: img)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color(NSColor.controlBackgroundColor))
-                } else {
-                    Image(nsImage: img)
-                        .resizable()
-                        .scaledToFill()
-                }
+                CardFaceArtwork(image: img, fitsInsideCard: componentName != nil)
             } else {
                 placeholder
             }
         }
-        .frame(width: 290, height: 182)
-        .clipShape(RoundedRectangle(cornerRadius: Self.cardCorner, style: .continuous))
-        // Base gloss for real artwork so it reads as a physical card.
-        .overlay {
-            if hasArt {
-                LinearGradient(colors: [.white.opacity(0.14), .clear, .black.opacity(0.10)],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-                    .clipShape(RoundedRectangle(cornerRadius: Self.cardCorner, style: .continuous))
-                    .allowsHitTesting(false)
-            }
-        }
+        .frame(width: CardFaceGeometry.width, height: CardFaceGeometry.height)
+        .modifier(CardFaceFinish(hasArtwork: hasArt))
         // Scanning shimmer while reading artwork from the device.
         .overlay { scanOverlay.allowsHitTesting(false) }
         .overlay(alignment: .bottomLeading) {
@@ -105,30 +154,8 @@ struct WalletCardView: View {
         }
         .overlay(alignment: .topTrailing) { clearButton }
         .overlay { targetHighlight.allowsHitTesting(false) }
-        .contentShape(RoundedRectangle(cornerRadius: Self.cardCorner, style: .continuous))
-        .scaleEffect(isHovered ? 1.03 : 1.0)
-        .rotation3DEffect(.degrees(Double(-pointer.height) * maxTilt),
-                          axis: (x: 1, y: 0, z: 0), perspective: 0.6)
-        .rotation3DEffect(.degrees(Double(pointer.width) * maxTilt),
-                          axis: (x: 0, y: 1, z: 0), perspective: 0.6)
-        .shadow(color: .black.opacity(isHovered ? 0.28 : 0.12),
-                radius: isHovered ? 16 : 6,
-                x: CGFloat(pointer.width) * 10,
-                y: isHovered ? 10 - CGFloat(pointer.height) * 10 : 3)
-        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: pointer)
-        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: isHovered)
+        .modifier(CardFaceHover())
         .animation(.easeInOut(duration: 0.25), value: isReading)
-        .onContinuousHover { phase in
-            switch phase {
-            case .active(let location):
-                isHovered = true
-                pointer = CGSize(width: location.x / 290 - 0.5,
-                                 height: location.y / 182 - 0.5)
-            case .ended:
-                isHovered = false
-                pointer = .zero
-            }
-        }
         .onTapGesture { if hasArt { onViewLarge() } }
         .help(hasArt ? t("点击查看大图", "Click to view artwork") : t("拖入图片或点击下方“更换卡面”", "Drop an image or click Change artwork"))
         .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: $isTargeted) { providers in
@@ -243,21 +270,12 @@ struct WalletCardView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .lineLimit(1)
 
-            HStack(spacing: 4) {
-                Text(card.id.prefix(8) + "…" + card.id.suffix(6))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                Button(action: copyHash) {
-                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 9))
-                        .foregroundStyle(copied ? Color.green : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help(copied ? t("已复制", "Copied") : t("复制完整标识", "Copy card identifier"))
-            }
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(.quaternary, in: Capsule())
+            Text(card.id.prefix(7))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(.quaternary, in: Capsule())
 
             Spacer()
 
@@ -294,24 +312,11 @@ struct WalletCardView: View {
                 .disabled(readDisabled)
                 .help(t("从 iPhone 读取卡面并保存首次备份", "Read artwork and save the first backup"))
 
-                Button(action: onExport) {
-                    Image(systemName: isExporting ? "hourglass" : "square.and.arrow.up")
-                }
-                .buttonStyle(.bordered)
-                .disabled(!card.backup || isExporting)
-                .help(t("导出首次备份（ZIP）", "Export first backup (ZIP)"))
         }
         .controlSize(.regular)
     }
 
     // MARK: Helpers
-
-    private func copyHash() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(card.id, forType: .string)
-        copied = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
-    }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
         guard !imageChangeDisabled else { return false }
@@ -365,6 +370,8 @@ private struct CachedArtworkPreview: Identifiable {
     let id = UUID()
     let image: NSImage
     let url: URL?
+    let cardID: String
+    let deviceKey: String
     let cardLabel: String
 }
 
@@ -487,13 +494,17 @@ private struct ZoomableArtworkCanvas: NSViewRepresentable {
 
 private struct CachedArtworkViewer: View {
     let item: CachedArtworkPreview
-    let language: String
+    @ObservedObject var vm: AppViewModel
+    let exportBackup: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var zoom: CGFloat = 1
     @State private var fitRequest = 0
 
     private var image: NSImage? { item.image }
-    private func t(_ zh: String, _ en: String) -> String { language == "en" ? en : zh }
+    private func t(_ zh: String, _ en: String) -> String { vm.t(zh, en) }
+    private var backupAvailable: Bool {
+        vm.cards.contains { $0.id == item.cardID && $0.deviceKey == item.deviceKey && $0.backup }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -512,6 +523,9 @@ private struct CachedArtworkViewer: View {
                 if let url = item.url {
                     Button(t("在访达中显示", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                 }
+                Button(t("导出备份", "Export backup"), action: exportBackup)
+                    .disabled(!backupAvailable || vm.isExporting)
+                    .help(t("导出首次备份（ZIP）", "Export first backup (ZIP)"))
                 Button(t("关闭", "Close")) { dismiss() }
             }
             .padding(.horizontal, 18)
@@ -687,9 +701,22 @@ private struct CardEditorView: View {
 }
 
 struct ContentView: View {
+    private static let brandIcon = Bundle.main.image(forResource: "BrandIcon")
     @StateObject private var vm = AppViewModel()
+    @AppStorage("aircard.mainViewMode") private var mainViewMode = "cards"
     @State private var artworkPreview: CachedArtworkPreview?
     @State private var editorSelection: CardEditorSelection?
+
+    private var visibleCardIndices: [Int] {
+        vm.cards.indices.filter { index in
+            (vm.device == nil || vm.cards[index].deviceKey == vm.device?.key)
+                && !vm.hiddenCards.contains(vm.cards[index].deviceKey + ":" + vm.cards[index].id)
+        }
+    }
+
+    private var galleryCardIndices: [Int] {
+        visibleCardIndices.filter { vm.cards[$0].customImage != nil || vm.cards[$0].cachedArtwork != nil }
+    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -703,23 +730,46 @@ struct ContentView: View {
             Divider()
             
             // 2. Live Scanner Notice Banner (if active)
-            if vm.isScanningCards {
+            if mainViewMode == "cards" && vm.isScanningCards {
                 scanningNoticeBanner
                 Divider()
             }
-            ForEach(vm.pending) { recovery in
-                recoveryBanner(recovery)
-                Divider()
-            }
-            if vm.device != nil && vm.device?.compatible == false {
-                Text(vm.t("当前 iOS build 尚未验证，卡片操作已暂停。", "This iOS build is not verified. Card operations are paused."))
-                    .font(.caption).foregroundStyle(.orange)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.vertical, 7)
+            if mainViewMode == "cards" {
+                ForEach(vm.pending) { recovery in
+                    recoveryBanner(recovery)
+                    Divider()
+                }
+                if vm.device != nil && vm.device?.compatible == false {
+                    Text(vm.t("当前 iOS build 尚未验证，卡片操作已暂停。", "This iOS build is not verified. Card operations are paused."))
+                        .font(.caption).foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.vertical, 7)
+                }
             }
             
             // 3. Main Workspace
             ScrollView {
-                if vm.visibleCards.isEmpty {
+                if mainViewMode == "gallery" {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 290, maximum: 360), spacing: 28)],
+                        spacing: 28
+                    ) {
+                        ForEach(galleryCardIndices, id: \.self) { idx in
+                            let card = vm.cards[idx]
+                            if let image = card.customImage ?? card.cachedArtwork {
+                                CardFaceArtwork(image: image,
+                                                fitsInsideCard: card.customImage == nil &&
+                                                    card.cachedAssetNames.first.map { !$0.hasPrefix("cardBackgroundCombined") } == true)
+                                    .frame(width: CardFaceGeometry.width, height: CardFaceGeometry.height)
+                                    .modifier(CardFaceFinish(hasArtwork: true))
+                                    .modifier(CardFaceHover())
+                                    .accessibilityLabel(card.label.isEmpty
+                                                        ? vm.t("卡片 #\(idx + 1)", "Card #\(idx + 1)")
+                                                        : card.label)
+                            }
+                        }
+                    }
+                    .padding(28)
+                } else if vm.visibleCards.isEmpty {
                     emptyStateView
                         .padding(.top, 40)
                 } else {
@@ -727,11 +777,7 @@ struct ContentView: View {
                         columns: [GridItem(.adaptive(minimum: 330, maximum: 380), spacing: 20)],
                         spacing: 20
                     ) {
-                        ForEach(Array(vm.cards.indices.filter { index in
-                            vm.device == nil || vm.cards[index].deviceKey == vm.device?.key
-                        }.filter { index in
-                            !vm.hiddenCards.contains(vm.cards[index].deviceKey + ":" + vm.cards[index].id)
-                        }), id: \.self) { idx in
+                        ForEach(visibleCardIndices, id: \.self) { idx in
                             let cardId = vm.cards[idx].id
                             let cardKey = vm.cards[idx].deviceKey
                             WalletCardView(
@@ -741,19 +787,20 @@ struct ContentView: View {
                                 onPickImage: { editorSelection = CardEditorSelection(cardID: cardId, deviceKey: cardKey) },
                                 onClearImage: { vm.clearCardImage(for: cardId, deviceKey: cardKey) },
                                 onRead: { vm.readCardArtwork(cardId) },
-                                onExport: { exportCardArtwork(for: cardId, deviceKey: cardKey) },
                                 onImageDropped: { url in selectForPreview(url, for: cardId, deviceKey: cardKey) },
                                 onViewLarge: {
                                     if let image = vm.cards[idx].customImage ?? vm.cards[idx].cachedArtwork {
                                         artworkPreview = CachedArtworkPreview(
                                             image: image, url: vm.cards[idx].customImageURL,
-                                            cardLabel: vm.cards[idx].label.isEmpty ? "卡片 #\(idx + 1)" : vm.cards[idx].label)
+                                            cardID: cardId, deviceKey: cardKey,
+                                            cardLabel: vm.cards[idx].label.isEmpty
+                                                ? vm.t("卡片 #\(idx + 1)", "Card #\(idx + 1)")
+                                                : vm.cards[idx].label)
                                     }
                                 },
                                 onDelete: { vm.hideCard(cardId, deviceKey: cardKey) },
                                 readDisabled: !vm.canOperate || vm.isExporting,
                                 isReading: vm.readingCardID == cardId,
-                                isExporting: vm.exportingCardID == cardId,
                                 imageChangeDisabled: vm.isFlashing || vm.isExporting || vm.isReadingArtwork
                             )
                         }
@@ -764,18 +811,19 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             
             // 4. Collapsible Activity Console (if open or flashing)
-            if vm.showLogs {
+            if mainViewMode == "cards" && vm.showLogs {
                 Divider()
                 activityLogView
             }
             
-            Divider()
-            
-            // 5. Bottom Action & Status Bar
-            bottomBarView
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .background(.bar)
+            if mainViewMode == "cards" {
+                Divider()
+                // 5. Bottom Action & Status Bar
+                bottomBarView
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(.bar)
+            }
         }
         .frame(minWidth: 880, minHeight: 680)
         .preferredColorScheme(vm.appearance == "light" ? .light : vm.appearance == "dark" ? .dark : nil)
@@ -801,7 +849,8 @@ struct ContentView: View {
             Text(vm.errorMessage ?? "")
         }
         .sheet(item: $artworkPreview) { item in
-            CachedArtworkViewer(item: item, language: vm.language)
+            CachedArtworkViewer(item: item, vm: vm,
+                                exportBackup: { exportCardArtwork(for: item.cardID, deviceKey: item.deviceKey) })
         }
         .sheet(item: $editorSelection) { item in
             CardEditorView(vm: vm, cardID: item.cardID, deviceKey: item.deviceKey,
@@ -814,29 +863,40 @@ struct ContentView: View {
     
     private var headerView: some View {
         HStack(spacing: 12) {
-            Image(systemName: "creditcard.circle.fill")
-                .font(.system(size: 30))
-                .foregroundColor(.accentColor)
+            if let icon = Self.brandIcon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 42, height: 42)
+                    .offset(y: -3)
+                    .accessibilityHidden(true)
+            }
             
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("AirCard Lite")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                    Text("v0.2")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.accentColor.opacity(0.15))
-                        .foregroundColor(.accentColor)
-                        .clipShape(Capsule())
-                }
-                Text(vm.t("Wallet 卡面定制", "Wallet Card Skins"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(vm.t("百变卡片", "Ditto Card"))
+                    .font(.title2)
+                    .fontWeight(.bold)
+                Text("v0.2")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.15))
+                    .foregroundColor(.accentColor)
+                    .clipShape(Capsule())
             }
             
             Spacer()
+
+            Picker(vm.t("视图", "View"), selection: $mainViewMode) {
+                Text(vm.t("卡片", "Cards")).tag("cards")
+                Text(vm.t("画廊", "Gallery")).tag("gallery")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 168)
+            .accessibilityLabel(vm.t("视图", "View"))
+
+            if mainViewMode == "cards" {
             
             // Device Status Capsule
             HStack(spacing: 8) {
@@ -913,6 +973,7 @@ struct ContentView: View {
             .menuStyle(.borderlessButton)
             .frame(width: 30)
             .help(vm.t("设置", "Settings"))
+            }
         }
         .controlSize(.regular)
         .frame(height: 54)
@@ -1131,7 +1192,7 @@ struct ContentView: View {
     private func exportCardArtwork(for cardId: String, deviceKey: String) {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.zip]
-        panel.nameFieldStringValue = "AirCard-\(cardId.prefix(12)).zip"
+        panel.nameFieldStringValue = "DittoCard-\(cardId.prefix(12)).zip"
         panel.message = vm.t("导出首次备份（PNG 与 PDF）为 ZIP。", "Export the first backup as a ZIP.")
         if panel.runModal() == .OK, let url = panel.url {
             vm.exportCachedArtwork(cardId, deviceKey: deviceKey, to: url)
