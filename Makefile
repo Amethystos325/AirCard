@@ -11,11 +11,11 @@ all: build/device_helper build/airtraffic_host
 build:
 	mkdir -p $@
 
-build/device_helper: Sources/device_helper.m Sources/airlift_target.h Sources/os_trace.h | build
+build/device_helper: macos/helpers/device_helper.m macos/helpers/airlift_target.h macos/helpers/os_trace.h | build
 	$(CLANG) $(CFLAGS) $(FOUNDATION) $(MOBILEDEVICE) $< -o $@
 	codesign --force --sign - $@
 
-build/airtraffic_host: Sources/airtraffic_host.m | build
+build/airtraffic_host: macos/helpers/airtraffic_host.m | build
 	$(CLANG) $(CFLAGS) $(FOUNDATION) $(AIRTRAFFIC) $< -o $@
 	codesign --force --sign - $@
 

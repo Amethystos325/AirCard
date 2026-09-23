@@ -10,6 +10,22 @@
 
 ---
 
+## 项目结构
+
+| 目录或文件 | 用途 |
+| --- | --- |
+| `macos/swiftui/` | 原生 macOS 界面与 Swift 桥接代码；由根目录 `build.sh` 编译。 |
+| `macos/helpers/` | 原生设备通信与 AirTraffic helper；由根目录 `Makefile` 编译。 |
+| `desktop/` | Tauri、React 和 Rust 桌面客户端，支持 Windows 与 macOS。 |
+| `aircard_desktop/` | 两个桌面客户端共用的 Python 事务、存储、设备通信和图片处理代码。 |
+| 根目录 Python 文件 | 后端入口、旧版 CLI 及其仍在使用的兼容模块；Windows 诊断原型也从这里启动。 |
+| `macos/assets/` | SwiftUI 图标和 DMG 打包素材。 |
+| `tests/`、`docs/` | 自动化测试与使用、构建文档。 |
+
+`build/`、`.venv/`、`desktop/node_modules/` 和 `desktop/src-tauri/target/` 是本地构建或依赖目录，已由 Git 忽略。不要删除 `~/Library/Application Support/AirCardDesktop/` 中的备份与未完成事务数据。
+
+---
+
 ## Features
 - 🎨 **Custom Card Skins:** Assign custom artwork, textures, or bank logos to Apple Pay and Wallet cards.
 - ⚡ **Per-Card Customization:** Set and flash unique artwork for each card individually.

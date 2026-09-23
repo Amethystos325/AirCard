@@ -66,12 +66,12 @@ ICONSET_DIR="$SCRIPT_DIR/build/BrandIcon.iconset"
 rm -rf "$ICONSET_DIR"
 mkdir -p "$ICONSET_DIR"
 for point in 16 32 128 256 512; do
-    sips -z "$point" "$point" "dmg_assets/BrandIcon.png" --out "$ICONSET_DIR/icon_${point}x${point}.png" >/dev/null
+    sips -z "$point" "$point" "macos/assets/BrandIcon.png" --out "$ICONSET_DIR/icon_${point}x${point}.png" >/dev/null
     doubled=$((point * 2))
-    sips -z "$doubled" "$doubled" "dmg_assets/BrandIcon.png" --out "$ICONSET_DIR/icon_${point}x${point}@2x.png" >/dev/null
+    sips -z "$doubled" "$doubled" "macos/assets/BrandIcon.png" --out "$ICONSET_DIR/icon_${point}x${point}@2x.png" >/dev/null
 done
 iconutil --convert icns --output "${RESOURCES_DIR}/AppIcon.icns" "$ICONSET_DIR"
-cp "dmg_assets/BrandIcon.png" "${RESOURCES_DIR}/BrandIcon.png"
+cp "macos/assets/BrandIcon.png" "${RESOURCES_DIR}/BrandIcon.png"
 
 # Copy universal device_helper and airtraffic_host. Device discovery and log
 # streaming both run through device_helper, which talks to MobileDevice.framework
@@ -125,7 +125,8 @@ fi
 outputs=()
 for arch in $SWIFT_ARCHES; do
     swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target "$arch-apple-macosx14.0" \
-        AirCardApp.swift SwiftCardModel.swift SwiftDesktopBridge.swift SwiftAppLifecycle.swift \
+        macos/swiftui/AirCardApp.swift macos/swiftui/SwiftCardModel.swift \
+        macos/swiftui/SwiftDesktopBridge.swift macos/swiftui/SwiftAppLifecycle.swift \
         -o "build/${APP_NAME}_$arch"
     outputs+=("build/${APP_NAME}_$arch")
 done
@@ -152,14 +153,14 @@ rm -f "build/${APP_NAME}.dmg"
 if command -v create-dmg >/dev/null 2>&1; then
     create-dmg \
         --volname "$APP_NAME" \
-        --background "dmg_assets/background_700.png" \
+        --background "macos/assets/background_700.png" \
         --window-pos 200 120 \
         --window-size 700 460 \
         --icon-size 110 \
         --icon "${APP_NAME}.app" 175 220 \
         --hide-extension "${APP_NAME}.app" \
         --app-drop-link 525 220 \
-        --add-file "README.txt" "dmg_assets/README.txt" 350 360 \
+        --add-file "README.txt" "macos/assets/README.txt" 350 360 \
         --filesystem APFS \
         --overwrite \
         "build/${APP_NAME}.dmg" \

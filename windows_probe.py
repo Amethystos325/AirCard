@@ -280,7 +280,7 @@ async def trace_frame(service) -> tuple[int, bytes]:
 
 
 def trace_text(data: bytes) -> str | None:
-    # Same bounds and offsets as Sources/os_trace.h; multiline messages survive.
+    # Same bounds and offsets as macos/helpers/os_trace.h; multiline messages survive.
     if len(data) < 129 or data[0] != 2:
         return None
     header = struct.unpack_from("<I", data, 5)[0]
