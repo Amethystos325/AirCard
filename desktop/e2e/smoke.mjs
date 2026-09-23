@@ -1,8 +1,16 @@
 import { browser, $, expect } from '@wdio/globals';
 describe('Installed desktop shell', () => {
+  after(async () => {
+    // Use the normal close path so Rust waits for a safe backend shutdown.
+    // Return to the driver before the window and its connection disappear.
+    await browser.tauri.execute(() => {
+      setTimeout(() => { void window.__TAURI__.window.getCurrentWindow().close(); }, 100);
+    });
+  });
   it('loads the packaged backend, switches language and theme', async () => {
     await $('h1').waitForDisplayed();
-    await expect($('h1')).toHaveText('AirCardDESKTOP');
+    await expect($('h1')).toHaveText('AirCard Lite');
+    await $('summary').click();
     // The embedded driver changes native select values without dispatching change.
     // Dispatch the same DOM event used by the browser after choosing an option.
     await browser.execute(() => { const select = document.querySelector('select'); select.value = 'zh'; select.dispatchEvent(new Event('change', { bubbles: true })); });
@@ -10,7 +18,7 @@ describe('Installed desktop shell', () => {
     await browser.execute(() => { const select = document.querySelector('select[aria-label="外观"]'); select.value = 'dark'; select.dispatchEvent(new Event('change', { bubbles: true })); });
     await expect($('html')).toHaveAttribute('data-theme', 'dark');
     await browser.execute(() => { const select = document.querySelector('select[aria-label="语言"]'); select.value = 'en'; select.dispatchEvent(new Event('change', { bubbles: true })); });
-    await expect($('h2')).toHaveText(expect.stringContaining('Your cards'));
+    await expect($('main')).toHaveAttribute('aria-label', 'Cards');
     const result = await browser.tauri.execute(async () => {
       const api = window.__TAURI__;
       return await new Promise(async (resolve, reject) => {

@@ -1,5 +1,7 @@
 # AirCard Desktop 验证记录
 
+本项目使用本地测试、构建和安装验收，不使用 GitHub Actions / CI。复现步骤见 `../desktop/README.md`；各平台结果仅由对应本地环境的实际执行确认。
+
 日期：2026-09-23。Windows 11 x64，iPhone14,2，iOS 27.0 / 24A437。唯一更换测试卡片：用户明确指定的 Suica（卡片元数据为 JR 东日本）。不记录设备序列号或卡片标识。
 
 ## 已完成
@@ -33,6 +35,26 @@
 SHA-256：`410b9db9a882f1e39fae445d40219fbb47cd98e1f1398a6ab9289b1f402d1728`。
 
 本机日志：`build/desktop-suica-acceptance.json`、`build/desktop-installed-verification.json`、`build/desktop-e2e.log`。这些产物不纳入 Git，不包含在公开文档中展示的设备标识。
+
+## 本地构建复核（2026-09-23）
+
+基于 `a135110`，移除桌面 GitHub Actions 工作流并更新本地构建文档后，在 Windows 11 x64 再次执行：后端 65 项通过、2 项 macOS 测试跳过；前端 4 项通过；`pnpm bundle` 完成 TypeScript / Vite、Rust release 和 NSIS 打包。复用先前已验证的冻结后端资源；本轮未重新执行安装与真机写入。
+
+本次产物：`desktop/src-tauri/target/release/bundle/nsis/AirCard Desktop_0.2.0_x64-setup.exe`。
+
+SHA-256：`d6cc9a7b23ee449eaff7f8c4fdb5be075eec732073fe22986d0c163434b4b198`。上面的 `build/` 交付副本及其安装验收记录保持对应原产物。
+
+## 原版 UI 复刻复核（2026-09-23）
+
+- 参照 `AirCardApp.swift` 恢复紧凑顶栏、设备胶囊、卡片内操作、扫描提示、空状态引导和底部日志；加入 CSS 半透明材质、倾斜光泽、读取扫光及大图缩放。
+- 前端 8 项测试通过，覆盖选图和原生拖放只进入预览、明确点击才写入、卡片内读取锁定、大图查看、会话内隐藏及恢复、双语和日志。
+- Windows WebdriverIO 冒烟 1 项通过，验证冻结后端、语言和主题。测试配置使用独立应用标识；结束时走正常窗口关闭和后端安全退出流程。测试驱动清理会输出非阻断警告，最终测试进程退出码为 0，无测试后端驻留。
+- 使用合成卡片在本地浏览器检查 1100 × 780 和 820 × 600 窗口、浅色 / 深色、中文、更换预览和大图适应窗口。本轮未执行真实卡面写入，macOS 视觉尚未实机对照。
+- 生产构建通过 TypeScript / Vite、Rust release 和 NSIS 打包；不含测试插件或开发预览数据。复用已验证的冻结 Python 后端，本轮未重装。
+
+UI 复刻版安装包：`build/AirCardDesktop-0.2.0-windows-x64-ui.exe`。
+
+SHA-256：`1cf8d835653672e1ef3e517bb16a7b623ef78293814531a7176e1201e3ce1e7d`。原 `build/AirCardDesktop-0.2.0-windows-x64.exe` 保留；构建目录下的 NSIS 产物已更新为本次 UI 版本。
 
 ## 待对应环境验收
 

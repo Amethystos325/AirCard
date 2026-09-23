@@ -1,7 +1,10 @@
 export const en = {
-  subtitle: 'A little more you. In your Wallet.', cards: 'Your cards', card: 'Card', refresh: 'Refresh', scan: 'Find cards', stopScan: 'Stop scanning',
-  connected: 'Connected', offline: 'Connect your iPhone', offlineHint: 'Connect with USB, unlock your iPhone, and trust this computer.',
-  empty: 'Your Wallet, your canvas.', emptyHint: 'Connect an iPhone, then open Wallet and select a card while scanning.',
+  preferences: 'Preferences', scanTitle: 'Scanning secure element cards', done: 'Done', startScan: 'Start Scanning',
+  stepScan: 'Click Scan Cards in the toolbar above.', stepWallet: 'On your iPhone, double-click the side button, authenticate, then tap a payment or transit card.', stepDetected: 'Verified cards will appear here. Ordinary passes are skipped.',
+  unassigned: 'No artwork selected', dropHint: 'Drop an image, or click Change artwork below', releaseImage: 'Release to preview image', changeArtwork: 'Change artwork', copyId: 'Copy card identifier', removeCard: 'Hide from this list', showRemoved: 'Show hidden cards', clear: 'Clear', viewLarge: 'View artwork', fit: 'Fit', zoomIn: 'Zoom in', zoomOut: 'Zoom out',
+  subtitle: 'Wallet Card Skins', cards: 'Cards', card: 'Card', refresh: 'Refresh', scan: 'Scan Cards', stopScan: 'Stop scanning',
+  connected: 'Connected', offline: 'No iPhone (USB)', offlineHint: 'Connect with USB, unlock your iPhone, and trust this computer.',
+  empty: 'No Cards Detected Yet', emptyHint: 'Connect an iPhone, then open Wallet and select a card while scanning.',
   scanning: 'Open Wallet on your iPhone and switch between cards.', noCompatible: 'This iOS build has not been verified. Card operations are unavailable.',
   read: 'Read artwork', reading: 'Reading artwork', choose: 'Choose image', drop: 'Drop a PNG, JPEG or WebP here', original: 'Current artwork', replacement: 'Your new artwork',
   apply: 'Apply artwork', restore: 'Restore first backup', export: 'Export backup', close: 'Close', cancel: 'Stop after current step',
@@ -29,9 +32,12 @@ export const en = {
 } as const;
 export type Key = keyof typeof en;
 export const zh: Record<Key, string> = {
-  subtitle: '让 Wallet 多一点你的风格。', cards: '我的卡片', card: '卡片', refresh: '刷新', scan: '查找卡片', stopScan: '停止扫描',
-  connected: '已连接', offline: '连接你的 iPhone', offlineHint: '使用 USB 连接并解锁 iPhone，然后信任这台电脑。',
-  empty: '你的 Wallet，由你设计。', emptyHint: '连接 iPhone，开始扫描，然后在手机 Wallet 中选择卡片。',
+  preferences: '设置', scanTitle: '正在扫描安全元件卡', done: '完成', startScan: '开始扫描',
+  stepScan: '点击上方工具栏中的“扫描卡片”。', stepWallet: '在 iPhone 上双击侧边键、完成身份验证，再轻点银行卡或交通卡。', stepDetected: '通过类型确认的卡片会显示在这里，普通通行证将被跳过。',
+  unassigned: '尚未指定卡面', dropHint: '拖入图片，或点击下方“更换卡面”', releaseImage: '松开以预览图片', changeArtwork: '更换卡面', copyId: '复制完整标识', removeCard: '从当前列表隐藏', showRemoved: '显示已隐藏卡片', clear: '清空', viewLarge: '查看大图', fit: '适应窗口', zoomIn: '放大', zoomOut: '缩小',
+  subtitle: 'Wallet 卡面定制', cards: '卡片', card: '卡片', refresh: '刷新', scan: '扫描卡片', stopScan: '停止扫描',
+  connected: '已连接', offline: '未连接 iPhone (USB)', offlineHint: '使用 USB 连接并解锁 iPhone，然后信任这台电脑。',
+  empty: '尚未检测到卡片', emptyHint: '连接 iPhone，开始扫描，然后在手机 Wallet 中选择卡片。',
   scanning: '请打开手机 Wallet，并依次切换需要添加的卡片。', noCompatible: '当前 iOS build 尚未验证，暂不能操作卡片。',
   read: '读取卡面', reading: '正在读取卡面', choose: '选择图片', drop: '拖入 PNG、JPEG 或 WebP 图片', original: '当前卡面', replacement: '新的卡面',
   apply: '应用卡面', restore: '恢复首次备份', export: '导出备份', close: '关闭', cancel: '完成当前步骤后停止',

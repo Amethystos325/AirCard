@@ -1,6 +1,7 @@
 {
+  "identifier": "com.aircard.desktop.e2e",
   "app": {
     "withGlobalTauri": true,
-    "security": {"capabilities": ["main", {"identifier": "e2e", "windows": ["main"], "permissions": ["wdio:default"]}]}
+    "security": {"capabilities": ["main", {"identifier": "e2e", "windows": ["main"], "permissions": ["wdio:default", "core:window:allow-close"]}]}
   }
 }

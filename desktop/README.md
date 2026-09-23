@@ -5,7 +5,7 @@ Tauri 2、React、TypeScript 和独立 Python 3.12 后端。原有 SwiftUI 应�
 ## 使用
 
 1. Windows 11 x64 安装 Microsoft Store 版 iTunes，打开软件确认电脑已信任 iPhone。当前 Windows 运行库适配验证的是 Store iTunes；仅安装“Apple 设备”的配置尚未验收。AirCard 不分发 Apple DLL。
-2. 安装生成的 NSIS 包，连接并解锁手机，点击“查找卡片”，在 Wallet 中切换目标卡片。
+2. 安装生成的 NSIS 包，连接并解锁手机，点击“扫描卡片”，在 Wallet 中切换目标卡片。
 3. 停止扫描，选择已分类卡片，读取卡面。首次备份按设备和卡片隔离，包含原有缺失文件状态。
 4. 选图、调整位置和缩放、生成预览，最后点击“应用卡面”。选图不会修改手机。
 5. “恢复首次备份”恢复本应用第一次备份的卡面。请重新打开 Wallet 检查显示效果。
@@ -14,41 +14,26 @@ Tauri 2、React、TypeScript 和独立 Python 3.12 后端。原有 SwiftUI 应�
 
 当前兼容门槛沿用已有原生应用：iOS 27.0，build `24A435`、`24A437`、`24A5390f`。USB 能连接不表示其他版本可以写入。
 
-## 开发与构建
+## 原版界面风格
 
-依赖：Node.js 22、pnpm 11.7.0、Rust 1.98.1、Python 3.12。Windows 需要 VS 2022 Build Tools 的 C++ 工具链；macOS 需要 Xcode Command Line Tools。
+桌面界面参照 `AirCardApp.swift`：62px 紧凑工具栏、设备状态胶囊、扫描提示条、290 × 182 卡面、自适应网格、卡片内读取 / 更换 / 导出按钮，以及底部状态和折叠日志。CSS 复现半透明材质、卡面光泽、悬停倾斜和读取扫光；减少动态效果的系统设置会关闭动画。系统原生毛玻璃和字体渲染在不同平台仍有差异。
 
-在仓库根目录安装锁定的 Python 依赖：
+点击已读取的卡面可缩放查看；标识可复制；列表隐藏仅作用于当前会话，可通过“显示已隐藏卡片”恢复，不删除备份。语言和明暗主题位于右上角设置菜单。更换卡面或拖入图片进入预览，生成裁剪预览后仍需点击“应用卡面”。底部按真实阶段显示不定进度，不显示估算百分比。
 
-```powershell
-python -m venv .venv
-.venv/Scripts/python -m pip install -r requirements-desktop.lock
-$env:AIRCARD_PYTHON = (Resolve-Path .venv/Scripts/python.exe).Path
-cd desktop
-pnpm install --frozen-lockfile
-pnpm dev
-```
+仅开发服务器支持 `http://localhost:1420/?preview=cards`，使用合成卡片检查外观，不执行设备操作；生产构建不包含此预览数据。
 
-macOS 使用 `.venv/bin/python` 设置 `AIRCARD_PYTHON`，先在仓库根目录运行 `make all` 构建现有 AirTraffic helper。Mac 环境变量使用本机 shell 语法。
+## 依赖、开发与构建
 
-打包：
+完整步骤见 [Windows 依赖与双端本地构建指南](../docs/desktop-build.md)，包含：
 
-```powershell
-pnpm package:backend
-pnpm bundle
-```
+- Windows 安装版所需的 WebView2、Store iTunes、Apple 设备驱动与服务，以及连接排查。
+- Windows PowerShell 的工具链安装、Python 虚拟环境、测试和 NSIS 打包命令。
+- macOS arm64 / Intel 的工具链、原生 helper、Python 后端和 app / DMG 构建命令。
+- 两端开发调试、桌面冒烟、安装验收和常见构建问题。
 
-Windows 产物：`src-tauri/target/release/bundle/nsis/`。macOS 使用 `pnpm bundle --config src-tauri/tauri.macos.conf.json` 生成 app / DMG。分别在 arm64 和 x64 的 macOS 构建，最低系统版本 14.0。默认发布构建不含测试驱动插件。
+项目只在本地构建验证，不使用 GitHub Actions / CI。Windows 产物在 Windows 构建；Mac 产物在对应架构的 Mac 上构建。安装版包含 Python 后端，使用者无需安装开发工具；Mac 构建及真机流程在实际执行通过前仍标记为待验收。
 
-后端按 PyInstaller onedir 放入应用资源 `backend/`，Rust 直接启动固定可执行程序。冻结后的原生 worker 使用同一程序的 `--native-worker` 模式。安装后无需 Python，不读取仓库 `.tmp`；运行库从用户安装的 Apple 组件复制至应用数据缓存。
-
-## 测试
-
-根目录执行 `python -m unittest discover -s tests -q`；desktop 目录执行 `pnpm test`。
-
-桌面 WebdriverIO 测试：设置 `VITE_E2E=1`，运行 `pnpm tauri build --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json`，随后运行 `pnpm test:e2e`。指定独立的 `AIRCARD_DATA_DIR`，避免混用真实备份；可用 `AIRCARD_E2E_BINARY` 指向测试副本。嵌入驱动的 select 操作不发送 DOM change，冒烟测试显式派发该事件；React 交互测试另覆盖选择图片后必须点击应用才写入。
-
-`.github/workflows/desktop.yml` 在 Windows、macOS arm64、macOS x64 上测试和生成构建产物，不自动发布。Mac 构建和真机验收在实际执行通过前均标记为待验收。
+构建顺序为：安装锁定依赖 → macOS 构建 helper → 测试 → `pnpm package:backend` → `pnpm bundle`。macOS 最后一步需要添加 `--config src-tauri/tauri.macos.conf.json`。首次开发启动也先准备后端资源，并显式设置 `AIRCARD_PYTHON`，避免依赖原型的本机路径。
 
 ## 数据与协议
 

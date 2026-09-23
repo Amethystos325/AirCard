@@ -8,13 +8,13 @@ describe('desktop', () => {
   it('keeps disconnected writes unavailable and explains how to connect', async () => {
     render(<Provider><App/></Provider>);
     expect(await screen.findByText(en.offline)).toBeInTheDocument();
-    for (const button of screen.getAllByRole('button', { name: /Find cards/ })) expect(button).toBeDisabled();
+    for (const button of screen.getAllByRole('button', { name: /Scan Cards|Start Scanning/ })) expect(button).toBeDisabled();
     expect(screen.queryByRole('button', { name: en.apply })).not.toBeInTheDocument();
   });
   it('switches the complete interface language', () => {
     render(<Provider><App/></Provider>);
     fireEvent.change(screen.getByLabelText(en.language), { target: { value: 'zh' } });
-    expect(screen.getByText(zh.cards)).toBeInTheDocument();
+    expect(screen.getByRole('main', { name: zh.cards })).toBeInTheDocument();
     expect(Object.keys(zh).sort()).toEqual(Object.keys(en).sort());
   });
   it('bounds the event log and preserves card state', () => {

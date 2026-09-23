@@ -16,6 +16,11 @@ export function receive(message: Message) {
 export function subscribe(callback: (message: Message) => void) { subscribers.add(callback); return () => { subscribers.delete(callback); }; }
 export async function request(method: string, params: Record<string, unknown> = {}): Promise<any> {
   if (demo) {
+    if (import.meta.env.DEV && new URLSearchParams(location.search).get('preview') === 'cards') {
+      const fixture = await import('./preview-fixture');
+      if (method === 'hello' || method === 'overview') return { cards: fixture.previewCards, pending: [], active: null };
+      if (method === 'device') return fixture.previewDevice;
+    }
     if (method === 'hello' || method === 'overview') return { cards: [], pending: [], active: null };
     if (method === 'device') throw new Error('NO_DEVICE');
     throw new Error('BACKEND_OFFLINE');

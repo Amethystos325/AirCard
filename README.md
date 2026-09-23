@@ -28,7 +28,14 @@ Python backend. It includes bilingual UI, image cropping, per-device backups,
 transaction recovery and Windows NSIS packaging. A real Suica completed the
 Windows backup → replace → restore cycle; the user confirmed both artwork
 changes in Wallet. macOS builds and device acceptance are still pending.
-See [desktop build and usage instructions](desktop/README.md) and
+Windows users need **Windows 11 x64**, **WebView2 Runtime**, and the verified
+**Microsoft Store version of iTunes** for USB device communication. Python,
+Node.js, Rust and Visual Studio are not required to run the installer. Apple DLLs
+are not redistributed; Apple Devices-only and legacy desktop iTunes setups have
+not been validated.
+
+See [Windows dependencies and local build instructions for both platforms](docs/desktop-build.md),
+[desktop usage](desktop/README.md), and
 [validation results and remaining checks](docs/desktop-validation.md).
 
 ### Windows diagnostic prototype
@@ -137,6 +144,26 @@ for the verified environment and remaining coverage.
 ---
 
 ## Building from Source
+
+### Tauri desktop client — Windows and macOS
+
+Follow the [local build guide / Windows 依赖与双端构建指南](docs/desktop-build.md)
+for complete PowerShell and macOS shell commands. Build Windows NSIS packages on
+Windows 11 x64 and macOS app / DMG packages on native arm64 or Intel Macs.
+Builds and validation run locally; this project does not use GitHub Actions / CI.
+
+The desktop client uses Node.js 22, pnpm 11.7.0, Rust 1.98.1 and Python 3.12.
+Windows additionally needs the VS 2022 C++ Build Tools and WebView2; macOS needs
+Xcode Command Line Tools and the native helper built with `make all`.
+After dependency installation and tests, run `pnpm package:backend`, then
+`pnpm bundle` from `desktop/`; on macOS add
+`--config src-tauri/tauri.macos.conf.json`. The full guide covers interpreter
+selection, architecture matching, output paths and installed-app validation.
+
+### Original SwiftUI app — macOS only
+
+The following builds the original app. Its script cleans the entire `build/`
+directory first; use a separate checkout or preserve existing desktop artifacts.
 
 ```sh
 git clone https://github.com/Amethystos325/AirCard.git
