@@ -1,54 +1,25 @@
-# Wallet card detection validation
+# 卡片扫描验证
 
-## Reproduction and cause
+## 已验证的历史环境
 
-An iPhone 15 Pro on iOS 18.6.2 connected successfully, but scanning found no cards
-after opening Wallet and selecting cards on the unlocked iPhone. Comparing both
-log services during the same interaction showed that `com.apple.syslog_relay`
-omitted the card paths, while `com.apple.os_trace_relay` included them in
-multiline resource lookup messages.
+在 iPhone 15 Pro / iOS 18.6.2 与 macOS 26.6.2 的组合上，旧日志读取方式能收到设备活动，却没有提供识别卡片所需的资源路径。改用统一活动日志后，测试者在 Wallet 中切换卡片时，应用检测到卡片候选；停止并再次启动扫描也能正常工作。该轮只验证发现流程，没有读取或更换卡面。
 
-The native helper now requests the unified activity stream and decodes its
-framed records through the MobileDevice service connection. This keeps the app
-self-contained. Existing card filters still identify the `.pkpass` paths.
-The app also displays helper diagnostics and resets its scanning state if the
-reader exits unexpectedly.
+这项历史结果不扩大当前卡面操作的兼容范围。现有后端只对 iOS 27.0 的 `24A435`、`24A437`、`24A5390f` 构建开放卡面操作。其他设备或系统版本需要分别验证。
 
-## Verified environment
+## 当前扫描流程
 
-| Component | Version |
-| --- | --- |
-| iPhone | iPhone 15 Pro (`iPhone16,1`), iOS 18.6.2 |
-| Mac | MacBook Air (M3, 2024), macOS 26.6.2 |
-| Source baseline | AirCard 1.2.3, commit `02b5ba8` |
+1. USB 连接、解锁手机并确认信任电脑。
+2. 在应用中点击“扫描卡片”，然后在 Wallet 中打开目标卡片。
+3. 停止扫描，等待应用读取卡片元数据并完成分类。不能确认类型的候选不会直接加入可操作列表。
+4. 若没有找到卡片，打开应用日志查看连接状态；重新连接、解锁后再试。
 
-The original report included a macOS 26.2 screenshot; the Mac used for this
-validation reported macOS 26.6.2. Do not treat macOS 26.2 as verified.
+设备日志中被系统隐藏的值无法由应用恢复。反馈问题时提供设备型号、iOS 与 macOS 版本、测试的提交号和界面错误消息；不要公开完整设备日志或卡片标识。
 
-After the change, the app detected eight card identifiers during live scanning,
-and the tester confirmed that cards appeared. No card artwork was flashed as
-part of detection testing. Stopping the helper reset the scanning UI, and a
-subsequent scan connected successfully without losing the detected cards.
-
-The iPhone 17 / iOS 27 case in [issue #28](https://github.com/Mak5er/AirCard/issues/28)
-has not been tested. Other device and OS combinations still need verification.
-
-## Automated checks
+## 本地检查
 
 ```sh
-python3 -m unittest discover -s tests -v
+.venv/bin/python -m unittest discover -s tests -q
 bash frontend/swift/build.sh
 ```
 
-Scanner tests cover fragmented and coalesced frames, the different byte orders
-of plist replies and activity records, disconnects, malformed lengths, truncated
-records, and multiline card paths reaching the existing detection patterns.
-Fixtures contain synthetic identifiers only. The native reader tests require
-macOS and Xcode command-line tools.
-
-## Help verify other devices
-
-If your device connects but no cards appear, try this branch's build and report
-your iPhone model, iOS version, macOS version, the exact AirCard commit tested,
-and whether cards appeared after selecting them in Wallet. Include any scanner
-error message, but do not include raw device logs or full card identifiers.
+自动化测试覆盖分段与合并消息、异常长度、连接中断和跨行卡片路径；原生日志读取测试需要 macOS 构建环境。自动化通过不等于新设备组合已完成真机验收。

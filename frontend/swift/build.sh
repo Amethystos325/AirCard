@@ -160,13 +160,14 @@ if command -v create-dmg >/dev/null 2>&1; then
         --icon "${APP_NAME}.app" 175 220 \
         --hide-extension "${APP_NAME}.app" \
         --app-drop-link 525 220 \
-        --add-file "README.txt" "frontend/swift/assets/README.txt" 350 360 \
+        --add-file "README.md" "frontend/swift/assets/README.md" 350 360 \
         --filesystem APFS \
         --overwrite \
         "build/${APP_NAME}.dmg" \
         "$DMG_STAGING"
 else
     ln -s /Applications "$DMG_STAGING/Applications"
+    cp "frontend/swift/assets/README.md" "$DMG_STAGING/README.md"
     hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING" -ov -format UDZO "build/${APP_NAME}.dmg"
 fi
 

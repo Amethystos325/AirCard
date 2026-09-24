@@ -6,23 +6,23 @@
 
 | 平台 | 系统及运行依赖 | 不需要安装的开发工具 |
 | --- | --- | --- |
-| Windows | Windows 11 x64、Microsoft Edge WebView2 Runtime；连接手机还需要已验证的 Microsoft Store 版 iTunes 及其 Apple 设备驱动 / 服务 | Python、Node.js、pnpm、Rust、Visual Studio |
-| macOS | 目标为 macOS 14+，安装与 CPU 架构匹配的应用；设备通信使用系统 Apple Framework | Python、Node.js、pnpm、Rust、Xcode |
+| Windows | Windows 11 x64、Microsoft Edge WebView2 Runtime；连接手机还需要已验证的 Microsoft Store 版 iTunes 及其设备驱动与后台服务 | Python、Node.js、pnpm、Rust、Visual Studio |
+| macOS | 目标为 macOS 14+，安装与 CPU 架构匹配的应用；设备通信使用系统框架 | Python、Node.js、pnpm、Rust、Xcode |
 
 安装包内含 PyInstaller 目录模式打包的 Python 后端。Windows 安装程序配置为检测 WebView2 并按需下载引导安装，缺少运行库时需要联网。离线安装前请预先安装 [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)。
 
-### Windows 的 Apple 组件
+### Windows 的设备组件
 
 1. 安装 [Microsoft Store 版 iTunes](https://apps.microsoft.com/detail/9pb2mz1zmb1s)，并打开一次。
 2. 用 USB 连接 iPhone，保持解锁，在手机上确认“信任此电脑”。先确认 iTunes 能打开手机的设备页面，再启动 DittoCard。
 3. 若安装驱动后仍不能连接，重新插拔 USB；安装程序要求重启时，先重启 Windows。
 
-本项目验证的是 Store iTunes 的组件布局。仅安装“Apple 设备”（Apple Devices）、传统桌面 iTunes、Windows ARM64 的配置均未验收，不能据此保证可用。DittoCard 从用户安装的 iTunes 发现 Apple DLL 和 CoreFP 依赖，复制到 `%LOCALAPPDATA%/AirCardDesktop/runtime/` 供隔离 worker 使用；安装包不分发 Apple DLL，也不要求手工复制 DLL、修改注册表或使用仓库 `.tmp` 目录。
+本项目验证的是 Store iTunes 的组件布局。仅安装独立设备管理应用、传统桌面 iTunes、Windows ARM64 的配置均未验收，不能据此保证可用。DittoCard 从用户安装的 iTunes 发现所需的设备通信库，复制到 `%LOCALAPPDATA%/AirCardDesktop/runtime/` 供隔离 worker 使用；安装包不分发这些系统组件，也不要求手工复制 DLL、修改注册表或使用仓库 `.tmp` 目录。
 
-排查 Apple Mobile Device Service 状态可在 PowerShell 中执行：
+可在 PowerShell 中查看设备后台服务：
 
 ```powershell
-Get-Service -DisplayName 'Apple Mobile Device Service' -ErrorAction SilentlyContinue
+Get-Service | Where-Object { $_.DisplayName -like '*Mobile Device*' }
 ```
 
 无结果表示未找到该服务；请检查 iTunes 安装及其设备组件。配对超时、未信任或锁定时，先检查手机解锁状态、信任提示和 iTunes 设备页。若 DittoCard 已显示待恢复任务，重连后先继续恢复。
@@ -71,7 +71,7 @@ $env:AIRCARD_PYTHON = (Resolve-Path .venv/Scripts/python.exe).Path
 # 根目录：运行后端测试
 & $env:AIRCARD_PYTHON -m unittest discover -s tests -q
 
-# desktop 目录：前端测试、后端打包、安装包构建
+# 跨端客户端目录：前端测试、后端打包、安装包构建
 Set-Location frontend/cross-platform
 pnpm install --frozen-lockfile
 pnpm test
@@ -95,14 +95,14 @@ Python 版本检查应显示 `3.12.x 64`，Rust host 应为 `x86_64-pc-windows-m
 
 ## macOS 14+ 构建（zsh / bash）
 
-以下命令只在 Mac 终端执行，不在 Windows PowerShell 中执行。Apple Silicon 和 Intel 分别在本机原生架构环境构建，不要求合并成 Universal 安装包。
+以下命令只在 Mac 终端执行，不在 Windows PowerShell 中执行。arm64 和 Intel Mac 分别在本机原生架构环境构建，不要求合并成 Universal 安装包。
 
-| 构建机器 | `uname -m` / Python 架构 | Rust host | 生成的桌面包 |
+| 构建机器 | `uname -m` / Python 架构 | Rust 架构 | 生成的桌面包 |
 | --- | --- | --- | --- |
-| Apple Silicon Mac | `arm64` | `aarch64-apple-darwin` | arm64 app / DMG |
-| Intel Mac | `x86_64` | `x86_64-apple-darwin` | x64 app / DMG |
+| arm64 Mac | `arm64` | arm64 | arm64 app / DMG |
+| Intel Mac | `x86_64` | x86_64 | x64 app / DMG |
 
-Apple Silicon 上不要使用 Rosetta 终端混合原生 arm64 Python 与 x64 Rust。PyInstaller 会打包当前解释器的架构，仅更改 Rust `--target` 不能完成整个应用的跨架构打包。
+arm64 Mac 上不要使用 Rosetta 终端混合原生 arm64 Python 与 x64 Rust。PyInstaller 会打包当前解释器的架构，仅更改 Rust `--target` 不能完成整个应用的跨架构打包。
 
 安装 Node.js 22、Python 3.12 和 rustup；如果没有 Xcode Command Line Tools，先执行 `xcode-select --install` 并完成安装。随后：
 
@@ -127,7 +127,7 @@ python3.12 -m venv .venv
 export AIRCARD_PYTHON="$PWD/.venv/bin/python"
 "$AIRCARD_PYTHON" -m unittest discover -s tests -q
 
-# desktop 目录：测试、打包后端和 app / DMG
+# 跨端客户端目录：测试、打包后端和 app / DMG
 cd frontend/cross-platform
 pnpm install --frozen-lockfile
 pnpm test
@@ -140,7 +140,7 @@ pnpm bundle --config src-tauri/tauri.macos.conf.json
 
 产物：`frontend/cross-platform/src-tauri/target/release/bundle/macos/` 下的 `.app`，以及 `frontend/cross-platform/src-tauri/target/release/bundle/dmg/` 下的 `.dmg`。从 DMG 安装 app 后再验收。开发调试同样在设置 `AIRCARD_PYTHON`、构建 helper 和打包后端之后，于 `frontend/cross-platform/` 执行 `pnpm dev`。
 
-两个架构使用各自独立的 checkout / 构建目录，不复用另一种架构的 `.venv`、`node_modules`、`target` 或冻结后端。当前 Windows 机器不能完成 Mac 本地构建验收。
+两个架构使用各自独立的 checkout / 构建目录，不复用另一种架构的 `.venv`、`node_modules`、`target` 或冻结后端。Windows 环境不能代替目标 Mac 的本地构建验收。
 
 ## 桌面冒烟与安装验收
 
@@ -185,7 +185,7 @@ pnpm bundle --config src-tauri/tauri.macos.conf.json
 | 找不到 Python、PyInstaller 或脚本访问 `.tmp/windows-prototype-py312` | 显式设置 `AIRCARD_PYTHON` 为当前 `.venv` 解释器的绝对路径；从仓库根目录安装锁定 Python 依赖 |
 | 缺少 `binaries/backend` 或冻结资源 | 在 `frontend/cross-platform/` 先运行 `pnpm package:backend`，再运行 `pnpm dev` / `pnpm bundle` |
 | Mac 缺少 `airtraffic_host` 或原生 framework 链接失败 | 检查 Command Line Tools 和所选 SDK，先在根目录运行 `make -C frontend/swift all`；保留实际错误用于 Mac 验收 |
-| 构建成功但无法发现 iPhone | 构建不要求手机在线；真机通信另需 Apple 组件、解锁和信任，按本文运行依赖排查 |
+| 构建成功但无法发现 iPhone | 构建不要求手机在线；真机通信还需已验证的设备组件、解锁和信任，按本文运行依赖排查 |
 | `1420` 端口被占用 | 检查是否已有本项目 Vite 服务，复用或正常停止旧开发会话 |
 | 后端 DLL / exe 文件被占用 | 正常关闭使用该构建目录的应用及测试窗口，等后端安全退出后重试 |
 
