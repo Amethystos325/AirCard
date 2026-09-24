@@ -58,6 +58,8 @@ final class AppViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var exportMessage: String?
     @Published var hiddenCards: Set<String> = []
+    /// User-chosen display order as "deviceKey:cardID" keys, shared by the card and gallery views.
+    @Published private(set) var cardOrder = UserDefaults.standard.stringArray(forKey: "aircard.cardOrder") ?? []
     @Published var language = UserDefaults.standard.string(forKey: "aircard.language") ?? "zh"
     @Published var appearance = UserDefaults.standard.string(forKey: "aircard.appearance") ?? "system"
 
@@ -332,6 +334,31 @@ final class AppViewModel: ObservableObject {
 
     func hideCard(_ id: String, deviceKey: String) {
         hiddenCards.insert(deviceKey + ":" + id)
+    }
+
+    static func orderKey(_ card: CardItem) -> String { card.deviceKey + ":" + card.id }
+
+    /// Sorts card indices by the saved order; cards never reordered keep backend order at the end.
+    func ordered(_ indices: [Int]) -> [Int] {
+        let rank = Dictionary(cardOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        return indices.enumerated().sorted { lhs, rhs in
+            let left = rank[Self.orderKey(cards[lhs.element])] ?? Int.max
+            let right = rank[Self.orderKey(cards[rhs.element])] ?? Int.max
+            return left != right ? left < right : lhs.offset < rhs.offset
+        }.map(\.element)
+    }
+
+    /// Moves `source` into `target`'s slot. Working on the full list keeps cards that the
+    /// current view filters out (such as cards without artwork in the gallery) in place.
+    func moveCard(_ source: String, to target: String) {
+        var keys = ordered(Array(cards.indices)).map { Self.orderKey(cards[$0]) }
+        guard source != target, let from = keys.firstIndex(of: source),
+              let to = keys.firstIndex(of: target) else { return }
+        keys.remove(at: from)
+        keys.insert(source, at: to)
+        // Keep saved positions of cards that are not loaded right now, such as another device's.
+        cardOrder = keys + cardOrder.filter { !keys.contains($0) }
+        UserDefaults.standard.set(cardOrder, forKey: "aircard.cardOrder")
     }
 
     private func handle(_ message: [String: Any]) {

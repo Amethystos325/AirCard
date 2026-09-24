@@ -80,6 +80,137 @@ private struct CardFaceHover: ViewModifier {
     }
 }
 
+/// A glossy highlight that sweeps diagonally across the card while artwork is read.
+private struct CardSheen: View {
+    private static let sweep = 1.8
+    private static let pause = 0.6
+    private static let samples = 48
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(paused: reduceMotion)) { context in
+            LinearGradient(stops: Self.stops(center: reduceMotion ? 0.5 : Self.center(at: context.date)),
+                           startPoint: UnitPoint(x: 0, y: 0.1), endPoint: UnitPoint(x: 1, y: 0.9))
+                .blendMode(.plusLighter)
+        }
+    }
+
+    /// Band position along the gradient axis; it starts and ends fully off the card.
+    private static func center(at date: Date) -> Double {
+        let t = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: sweep + pause)
+        let progress = min(t / sweep, 1)
+        let eased = progress * progress * (3 - 2 * progress)
+        return -0.6 + eased * 2.2
+    }
+
+    /// Samples a wide diffuse glow plus a softer, brighter centre. Sampling the brightness curve, rather
+    /// than moving a gradient-filled shape, leaves no hard edges anywhere on the card.
+    private static func stops(center: Double) -> [Gradient.Stop] {
+        (0...samples).map { index in
+            let location = Double(index) / Double(samples)
+            let distance = location - center
+            let glow = 0.16 * exp(-pow(distance / 0.3, 2))
+            let core = 0.1 * exp(-pow(distance / 0.1, 2))
+            return .init(color: .white.opacity(glow + core), location: location)
+        }
+    }
+}
+
+/// macOS 26 toolbars give every item a glass capsule; earlier systems need one drawn.
+private struct LegacyToolbarCapsule: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content
+        } else {
+            content.background(.quaternary, in: Capsule())
+        }
+    }
+}
+
+/// Slot frames of the cards in a grid, in the grid's coordinate space.
+private struct CardFramePreference: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+/// Marks the transaction that reorders cards, so the dragged card can skip its slot animation.
+private struct CardReorderTransactionKey: TransactionKey {
+    static let defaultValue = false
+}
+
+private struct CardDragState {
+    let key: String
+    /// Pointer position within the card when the drag began.
+    let grab: CGSize
+    /// The slot the card currently occupies, updated as soon as it moves.
+    var slot: CGRect
+    var location: CGPoint
+
+    var offset: CGSize {
+        CGSize(width: location.x - grab.width - slot.minX, height: location.y - grab.height - slot.minY)
+    }
+}
+
+/// Drag-to-reorder that moves the card itself: it lifts, follows the pointer, and the other
+/// cards make room as soon as the pointer is over their slot. System drag and drop would
+/// leave the original in place under a separate drag image.
+private struct ReorderableCard: ViewModifier {
+    static let space = "cardGrid"
+
+    let key: String
+    let frames: [String: CGRect]
+    @Binding var drag: CardDragState?
+    let move: (String, String) -> Void
+    let onEnd: () -> Void
+
+    func body(content: Content) -> some View {
+        let isDragging = drag?.key == key
+        content
+            .scaleEffect(isDragging ? 1.04 : 1)
+            .shadow(color: .black.opacity(isDragging ? 0.28 : 0), radius: isDragging ? 22 : 0, y: isDragging ? 14 : 0)
+            .offset(isDragging ? drag?.offset ?? .zero : .zero)
+            // Measured after the offset so the frame is the card's slot, not where it is drawn.
+            .background(GeometryReader { proxy in
+                Color.clear.preference(key: CardFramePreference.self,
+                                       value: [key: proxy.frame(in: .named(Self.space))])
+            })
+            .zIndex(isDragging ? 1 : 0)
+            // The dragged card tracks the pointer directly; only the others animate into place.
+            .transaction { if isDragging && $0[CardReorderTransactionKey.self] { $0.animation = nil } }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 6, coordinateSpace: .named(Self.space))
+                    .onChanged(changed)
+                    .onEnded { _ in
+                        onEnd()
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { drag = nil }
+                    }
+            )
+    }
+
+    private func changed(_ value: DragGesture.Value) {
+        if drag?.key != key {
+            guard drag == nil, let slot = frames[key] else { return }
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                drag = CardDragState(key: key,
+                                     grab: CGSize(width: value.startLocation.x - slot.minX,
+                                                  height: value.startLocation.y - slot.minY),
+                                     slot: slot, location: value.location)
+            }
+        }
+        drag?.location = value.location
+        guard let target = frames.first(where: { $0.key != key && $0.value.contains(value.location) }) else { return }
+        // The dragged card takes over the target's slot; record it now so the card stays
+        // under the pointer instead of waiting for the next layout pass to report it.
+        drag?.slot = target.value
+        var transaction = Transaction(animation: .snappy(duration: 0.3))
+        transaction[CardReorderTransactionKey.self] = true
+        withTransaction(transaction) { move(key, target.key) }
+    }
+}
+
 struct WalletCardView: View {
     @Binding var card: CardItem
     let cardIndex: Int
@@ -98,8 +229,6 @@ struct WalletCardView: View {
     private func t(_ zh: String, _ en: String) -> String { language == "en" ? en : zh }
 
     @State private var isTargeted = false
-    // Drives the sweeping scan shimmer while reading (-1 ... 1).
-    @State private var scanX: CGFloat = -1
 
     private var displayImage: NSImage? { card.customImage ?? card.cachedArtwork }
     private var hasArt: Bool { displayImage != nil }
@@ -209,19 +338,7 @@ struct WalletCardView: View {
                 RoundedRectangle(cornerRadius: Self.cardCorner, style: .continuous)
                     .fill(.ultraThinMaterial)
 
-                // Soft diagonal light sweep that feathers along its travel axis.
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: .white.opacity(0.35), location: 0.5),
-                        .init(color: .clear, location: 1.0),
-                    ],
-                    startPoint: .leading, endPoint: .trailing
-                )
-                .frame(width: 170)
-                .rotationEffect(.degrees(18))
-                .offset(x: scanX * 280)
-                .blendMode(.screen)
+                CardSheen()
 
                 Label(t("读取中…", "Reading…"), systemImage: "dot.radiowaves.left.and.right")
                     .font(.caption.weight(.semibold))
@@ -232,12 +349,6 @@ struct WalletCardView: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: Self.cardCorner, style: .continuous))
             .transition(.opacity)
-            .onAppear {
-                scanX = -1
-                withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
-                    scanX = 1
-                }
-            }
         }
     }
 
@@ -373,6 +484,17 @@ private struct CachedArtworkPreview: Identifiable {
     let cardID: String
     let deviceKey: String
     let cardLabel: String
+
+    var pixelSize: NSSize { image.pixelSize }
+    var pixelSizeText: String { "\(Int(pixelSize.width)) × \(Int(pixelSize.height))" }
+}
+
+private extension NSImage {
+    /// Pixel dimensions, independent of the DPI metadata that drives `size`.
+    var pixelSize: NSSize {
+        representations.first { $0.pixelsWide > 0 }
+            .map { NSSize(width: $0.pixelsWide, height: $0.pixelsHigh) } ?? size
+    }
 }
 
 private final class CenteredArtworkClipView: NSClipView {
@@ -423,7 +545,8 @@ private final class ArtworkScrollView: NSScrollView {
         let size = contentView.frame.size
         guard size.width > 0, size.height > 0, size != fittedSize else { return }
         fittedSize = size
-        minMagnification = min(fitZoom, 1)
+        // Allow zooming out past fit so the whole card can sit small in a large window.
+        minMagnification = min(fitZoom, 1) / 4
         maxMagnification = max(Self.maxZoom, fitZoom)
         // Keep a fitted image fitted while the sheet resizes; otherwise just re-clamp.
         if isFitted { fitArtwork() } else { setArtworkZoom(magnification) }
@@ -563,9 +686,7 @@ private struct ZoomableArtworkCanvas: NSViewRepresentable {
         scrollView.allowsMagnification = true
 
         // Size by pixels so 100% means actual pixels regardless of the file's DPI metadata.
-        let pixels = image.representations.first { $0.pixelsWide > 0 }
-            .map { NSSize(width: $0.pixelsWide, height: $0.pixelsHigh) } ?? image.size
-        let imageView = NSImageView(frame: NSRect(origin: .zero, size: pixels))
+        let imageView = NSImageView(frame: NSRect(origin: .zero, size: image.pixelSize))
         imageView.image = image
         imageView.imageScaling = .scaleAxesIndependently
         scrollView.documentView = imageView
@@ -584,97 +705,126 @@ private struct CachedArtworkViewer: View {
     let item: CachedArtworkPreview
     @ObservedObject var vm: AppViewModel
     let exportBackup: () -> Void
-    @Environment(\.dismiss) private var dismiss
     @StateObject private var zoom = ArtworkZoomController()
 
     private func t(_ zh: String, _ en: String) -> String { vm.t(zh, en) }
     private var backupAvailable: Bool {
         vm.cards.contains { $0.id == item.cardID && $0.deviceKey == item.deviceKey && $0.backup }
     }
-    private var pixelSize: String {
-        let rep = item.image.representations.first { $0.pixelsWide > 0 }
-        let width = rep?.pixelsWide ?? Int(item.image.size.width)
-        let height = rep?.pixelsHigh ?? Int(item.image.size.height)
-        return "\(width) × \(height)"
-    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-                .padding(.horizontal, 16)
-                .frame(height: 52)
-                .background(.bar)
-            Divider()
-            ZoomableArtworkCanvas(image: item.image, controller: zoom)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(minWidth: 760, idealWidth: 960, minHeight: 560, idealHeight: 680)
+        ZoomableArtworkCanvas(image: item.image, controller: zoom)
+            .frame(minWidth: 480, maxWidth: .infinity, minHeight: 320, maxHeight: .infinity)
+            .toolbar { toolbarContent }
+            .preferredColorScheme(vm.appearance == "light" ? .light : vm.appearance == "dark" ? .dark : nil)
     }
 
-    private var header: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(item.cardLabel)
-                    .font(.headline)
-                    .lineLimit(1)
-                Text(t("卡面素材 · \(pixelSize) 像素", "Card artwork · \(pixelSize) px"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+    @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button(action: zoom.zoomOut) {
+                Label(t("缩小", "Zoom Out"), systemImage: "minus.magnifyingglass")
             }
-
-            Spacer(minLength: 16)
-
-            ControlGroup {
-                Button(action: zoom.zoomOut) {
-                    Label(t("缩小", "Zoom Out"), systemImage: "minus.magnifyingglass")
-                }
-                .disabled(!zoom.canZoomOut)
-                .help(t("缩小（⌘−）", "Zoom Out (⌘−)"))
-                Button(action: zoom.zoomIn) {
-                    Label(t("放大", "Zoom In"), systemImage: "plus.magnifyingglass")
-                }
-                .disabled(!zoom.canZoomIn)
-                .help(t("放大（⌘+）", "Zoom In (⌘+)"))
+            .disabled(!zoom.canZoomOut)
+            .help(t("缩小（⌘−）", "Zoom Out (⌘−)"))
+            Button(action: zoom.zoomIn) {
+                Label(t("放大", "Zoom In"), systemImage: "plus.magnifyingglass")
             }
-            .labelStyle(.iconOnly)
-            .fixedSize()
-
+            .disabled(!zoom.canZoomIn)
+            .help(t("放大（⌘+）", "Zoom In (⌘+)"))
             Menu {
-                Button(t("适应窗口（⌘9）", "Zoom to Fit (⌘9)"), action: zoom.fit)
+                Button(t("适应窗口", "Zoom to Fit"), action: zoom.fit)
+                    .keyboardShortcut("9")
                     .disabled(zoom.isFitted)
-                Button(t("实际大小（⌘0）", "Actual Size (⌘0)")) { zoom.zoom(to: 1) }
+                Button(t("实际大小", "Actual Size")) { zoom.zoom(to: 1) }
+                    .keyboardShortcut("0")
                 Divider()
-                ForEach([0.5, 2, 4] as [CGFloat], id: \.self) { value in
+                ForEach([0.25, 0.5, 2, 4] as [CGFloat], id: \.self) { value in
                     Button("\(Int(value * 100))%") { zoom.zoom(to: value) }
                 }
             } label: {
                 Text("\(Int((zoom.zoom * 100).rounded()))%")
                     .monospacedDigit()
+                    .frame(minWidth: 44)
             }
-            .fixedSize()
             .help(t("缩放比例。双指开合、滚轮或 ⌘ + 滚动缩放，拖动平移，双击切换适应窗口。",
                     "Zoom level. Pinch, use the scroll wheel or ⌘-scroll to zoom, drag to pan, double-click to toggle fit."))
-
-            if let url = item.url {
+        }
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+        }
+        if let url = item.url {
+            ToolbarItem(placement: .primaryAction) {
                 Button { NSWorkspace.shared.activateFileViewerSelecting([url]) } label: {
                     Label(t("在访达中显示", "Show in Finder"), systemImage: "folder")
                 }
-                .labelStyle(.iconOnly)
                 .help(t("在访达中显示", "Show in Finder"))
             }
-
+        }
+        ToolbarItem(placement: .primaryAction) {
             Button(action: exportBackup) {
                 Label(t("导出备份", "Export Backup"), systemImage: "square.and.arrow.up")
             }
             .disabled(!backupAvailable || vm.isExporting)
             .help(t("导出首次备份（ZIP）", "Export first backup (ZIP)"))
-
-            Button(t("完成", "Done")) { dismiss() }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.cancelAction)
         }
-        .controlSize(.regular)
+    }
+}
+
+/// Opens each artwork preview in its own resizable window with standard window controls.
+@MainActor
+private final class ArtworkWindowPresenter: NSObject, NSWindowDelegate {
+    static let shared = ArtworkWindowPresenter()
+    private var windows: [String: NSWindow] = [:]
+
+    func show(_ item: CachedArtworkPreview, vm: AppViewModel, exportBackup: @escaping () -> Void) {
+        let key = item.deviceKey + ":" + item.cardID
+        let previous = windows[key]
+        let controller = NSHostingController(rootView: CachedArtworkViewer(item: item, vm: vm, exportBackup: exportBackup))
+        controller.sceneBridgingOptions = [.toolbars]
+        controller.sizingOptions = [.minSize]
+        // The window's title is bound to its content view controller's title.
+        controller.title = item.cardLabel
+
+        let window = NSWindow(contentViewController: controller)
+        window.subtitle = vm.t("卡面素材 · \(item.pixelSizeText) 像素", "Card artwork · \(item.pixelSizeText) px")
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.toolbarStyle = .unified
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.appearance = vm.appearance == "light" ? NSAppearance(named: .aqua)
+            : vm.appearance == "dark" ? NSAppearance(named: .darkAqua) : nil
+        window.setContentSize(Self.initialContentSize(for: item.pixelSize, on: NSApp.keyWindow?.screen ?? NSScreen.main))
+        if let previous {
+            // Reopening the same card replaces its window in place with the latest artwork.
+            window.setFrame(previous.frame, display: false)
+            previous.delegate = nil
+            previous.close()
+        } else if let parent = NSApp.keyWindow {
+            window.setFrameOrigin(NSPoint(x: parent.frame.midX - window.frame.width / 2,
+                                          y: parent.frame.midY - window.frame.height / 2))
+        } else {
+            window.center()
+        }
+        windows[key] = window
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        windows = windows.filter { $0.value !== window }
+    }
+
+    private static func initialContentSize(for pixels: NSSize, on screen: NSScreen?) -> NSSize {
+        let visible = screen?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
+        let aspect = pixels.height > 0 ? pixels.width / pixels.height : 1.6
+        var width = min(1000, visible.width * 0.7)
+        var height = width / aspect
+        let maxHeight = visible.height * 0.75
+        if height > maxHeight {
+            height = maxHeight
+            width = height * aspect
+        }
+        return NSSize(width: max(width, 480), height: max(height, 320))
     }
 }
 
@@ -814,14 +964,22 @@ struct ContentView: View {
     private static let brandIcon = Bundle.main.image(forResource: "BrandIcon")
     @StateObject private var vm = AppViewModel()
     @AppStorage("aircard.mainViewMode") private var mainViewMode = "cards"
-    @State private var artworkPreview: CachedArtworkPreview?
     @State private var editorSelection: CardEditorSelection?
+    @State private var cardDrag: CardDragState?
+    @State private var cardFrames: [String: CGRect] = [:]
+    @State private var lastCardDragEnd = Date.distantPast
+
+    private func reorderable(_ index: Int) -> ReorderableCard {
+        ReorderableCard(key: AppViewModel.orderKey(vm.cards[index]), frames: cardFrames, drag: $cardDrag,
+                        move: { vm.moveCard($0, to: $1) },
+                        onEnd: { lastCardDragEnd = Date() })
+    }
 
     private var visibleCardIndices: [Int] {
-        vm.cards.indices.filter { index in
+        vm.ordered(vm.cards.indices.filter { index in
             (vm.device == nil || vm.cards[index].deviceKey == vm.device?.key)
                 && !vm.hiddenCards.contains(vm.cards[index].deviceKey + ":" + vm.cards[index].id)
-        }
+        })
     }
 
     private var galleryCardIndices: [Int] {
@@ -830,17 +988,8 @@ struct ContentView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // 1. Top Header Bar
-            headerView
-                .padding(.leading, 20)
-                .padding(.trailing, 20)
-                .frame(height: 62)
-                .background(.bar)
-
-            Divider()
-            
-            // 2. Live Scanner Notice Banner (if active)
-            if mainViewMode == "cards" && vm.isScanningCards {
+            // 1. Live Scanner Notice Banner (if active)
+            if vm.isScanningCards {
                 scanningNoticeBanner
                 Divider()
             }
@@ -879,9 +1028,12 @@ struct ContentView: View {
                                     .accessibilityLabel(card.label.isEmpty
                                                         ? vm.t("卡片 #\(idx + 1)", "Card #\(idx + 1)")
                                                         : card.label)
+                                    .modifier(reorderable(idx))
                             }
                         }
                     }
+                    .coordinateSpace(name: ReorderableCard.space)
+                    .onPreferenceChange(CardFramePreference.self) { cardFrames = $0 }
                     .padding(28)
                 } else if vm.visibleCards.isEmpty {
                     emptyStateView
@@ -903,13 +1055,18 @@ struct ContentView: View {
                                 onRead: { vm.readCardArtwork(cardId) },
                                 onImageDropped: { url in selectForPreview(url, for: cardId, deviceKey: cardKey) },
                                 onViewLarge: {
+                                    // A click that ends a reorder drag should not open the preview.
+                                    guard Date().timeIntervalSince(lastCardDragEnd) > 0.3 else { return }
                                     if let image = vm.cards[idx].customImage ?? vm.cards[idx].cachedArtwork {
-                                        artworkPreview = CachedArtworkPreview(
+                                        let preview = CachedArtworkPreview(
                                             image: image, url: vm.cards[idx].customImageURL,
                                             cardID: cardId, deviceKey: cardKey,
                                             cardLabel: vm.cards[idx].label.isEmpty
                                                 ? vm.t("卡片 #\(idx + 1)", "Card #\(idx + 1)")
                                                 : vm.cards[idx].label)
+                                        ArtworkWindowPresenter.shared.show(preview, vm: vm) {
+                                            exportCardArtwork(for: cardId, deviceKey: cardKey)
+                                        }
                                     }
                                 },
                                 onDelete: { vm.hideCard(cardId, deviceKey: cardKey) },
@@ -917,8 +1074,11 @@ struct ContentView: View {
                                 isReading: vm.readingCardID == cardId,
                                 imageChangeDisabled: vm.isFlashing || vm.isExporting || vm.isReadingArtwork
                             )
+                            .modifier(reorderable(idx))
                         }
                     }
+                    .coordinateSpace(name: ReorderableCard.space)
+                    .onPreferenceChange(CardFramePreference.self) { cardFrames = $0 }
                     .padding(20)
                 }
             }
@@ -940,6 +1100,8 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 880, minHeight: 680)
+        .navigationTitle(vm.t("百变卡片", "Ditto Card"))
+        .toolbar { mainToolbar }
         .preferredColorScheme(vm.appearance == "light" ? .light : vm.appearance == "dark" ? .dark : nil)
         .alert(vm.t("操作完成", "Success"), isPresented: $vm.showSuccessAlert) {
             Button("OK") {}
@@ -962,10 +1124,6 @@ struct ContentView: View {
         } message: {
             Text(vm.errorMessage ?? "")
         }
-        .sheet(item: $artworkPreview) { item in
-            CachedArtworkViewer(item: item, vm: vm,
-                                exportBackup: { exportCardArtwork(for: item.cardID, deviceKey: item.deviceKey) })
-        }
         .sheet(item: $editorSelection) { item in
             CardEditorView(vm: vm, cardID: item.cardID, deviceKey: item.deviceKey,
                            chooseImage: { openCardImagePicker(for: item.cardID, deviceKey: item.deviceKey) },
@@ -975,124 +1133,135 @@ struct ContentView: View {
     
     // MARK: - Subviews
     
-    private var headerView: some View {
-        HStack(spacing: 12) {
+    // The same items stay in the toolbar for every view mode, and the view switcher is
+    // the centered principal item, so switching tabs never moves any control.
+    @ToolbarContentBuilder private var mainToolbar: some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            ToolbarItem(placement: .navigation) { brandTitle }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .navigation) { brandTitle }
+        }
+        ToolbarItem(placement: .principal) { viewModePicker }
+        ToolbarItem(placement: .primaryAction) { deviceStatus }
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+        }
+        ToolbarItem(placement: .primaryAction) { scanButton }
+        ToolbarItem(placement: .primaryAction) { settingsMenu }
+    }
+
+    private var brandTitle: some View {
+        HStack(spacing: 8) {
             if let icon = Self.brandIcon {
                 Image(nsImage: icon)
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 42, height: 42)
-                    .offset(y: -3)
+                    .frame(width: 28, height: 28)
                     .accessibilityHidden(true)
             }
-            
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(vm.t("百变卡片", "Ditto Card"))
-                    .font(.title2)
-                    .fontWeight(.bold)
-                Text("v0.2")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.accentColor.opacity(0.15))
-                    .foregroundColor(.accentColor)
-                    .clipShape(Capsule())
-            }
-            
-            Spacer()
+            Text(vm.t("百变卡片", "Ditto Card"))
+                .font(.title3.weight(.semibold))
+            Text("v0.2")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.accentColor.opacity(0.15))
+                .foregroundColor(.accentColor)
+                .clipShape(Capsule())
+        }
+        .fixedSize()
+    }
 
-            Picker(vm.t("视图", "View"), selection: $mainViewMode) {
-                Text(vm.t("卡片", "Cards")).tag("cards")
-                Text(vm.t("画廊", "Gallery")).tag("gallery")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 168)
-            .accessibilityLabel(vm.t("视图", "View"))
+    private var viewModePicker: some View {
+        Picker(vm.t("视图", "View"), selection: $mainViewMode) {
+            Label(vm.t("卡片", "Cards"), systemImage: "creditcard").tag("cards")
+            Label(vm.t("画廊", "Gallery"), systemImage: "photo.on.rectangle.angled").tag("gallery")
+        }
+        .pickerStyle(.segmented)
+        .labelStyle(.titleAndIcon)
+        .labelsHidden()
+        .fixedSize()
+        .help(vm.t("切换视图", "Switch view"))
+    }
 
-            if mainViewMode == "cards" {
-            
-            // Device Status Capsule
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(vm.device != nil ? Color.green : Color.red)
-                    .frame(width: 8, height: 8)
-                
-                if let dev = vm.device {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(dev.name)
-                            .font(.system(size: 11, weight: .semibold))
-                            .lineLimit(1)
-                        Text("\(dev.product) · iOS \(dev.version)")
-                            .font(.system(size: 9))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                } else {
-                    Text(vm.t("未连接 iPhone (USB)", "No iPhone (USB)"))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+    private var deviceStatus: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(vm.device != nil ? Color.green : Color.red)
+                .frame(width: 8, height: 8)
+            if let dev = vm.device {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(dev.name)
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                    Text("\(dev.product) · iOS \(dev.version)")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                
-                Button(action: { vm.checkDevice() }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11))
-                }
-                .buttonStyle(.plain)
-                .disabled(vm.isCheckingDevice)
-                .help(vm.t("刷新设备连接", "Refresh device connection"))
+            } else {
+                Text(vm.t("未连接 iPhone (USB)", "No iPhone (USB)"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .frame(height: 32)
-            .background(.quaternary, in: Capsule())
-
-            Button(action: { vm.toggleCardScanning() }) {
-                HStack(spacing: 6) {
-                    if vm.isScanningCards {
-                        ProgressView()
-                            .scaleEffect(0.65)
-                            .frame(width: 16, height: 16)
-                    } else {
-                        Image(systemName: "wave.3.forward.circle.fill")
-                            .frame(width: 16, height: 16)
-                    }
-                    Text(vm.isScanningCards ? vm.t("停止扫描", "Stop scanning") : vm.t("扫描卡片", "Scan Cards"))
-                        .fontWeight(.semibold)
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .frame(height: 30)
-                .background(vm.isScanningCards ? Color.red : Color.blue, in: Capsule())
+            Button(action: { vm.checkDevice() }) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 11, weight: .medium))
             }
             .buttonStyle(.plain)
-            .opacity(vm.device != nil ? 1 : 0.45)
-            .disabled(!vm.isScanningCards && !vm.canOperate)
-            Menu {
+            .disabled(vm.isCheckingDevice)
+            .help(vm.t("刷新设备连接", "Refresh device connection"))
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 30)
+        .modifier(LegacyToolbarCapsule())
+        .fixedSize()
+    }
+
+    private var scanButton: some View {
+        Button(action: { vm.toggleCardScanning() }) {
+            Label(vm.isScanningCards ? vm.t("停止扫描", "Stop Scanning") : vm.t("扫描卡片", "Scan Cards"),
+                  systemImage: vm.isScanningCards ? "stop.circle.fill" : "wave.3.forward.circle.fill")
+                .labelStyle(.titleAndIcon)
+                .fontWeight(.semibold)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(vm.isScanningCards ? .red : .accentColor)
+        .disabled(!vm.isScanningCards && !vm.canOperate)
+        .help(vm.isScanningCards ? vm.t("停止扫描安全元件卡", "Stop scanning secure element cards")
+                                 : vm.t("在 iPhone 上轻点卡片以添加", "Tap cards on your iPhone to add them"))
+    }
+
+    private var settingsMenu: some View {
+        Menu {
+            Section(vm.t("语言", "Language")) {
                 Picker(vm.t("语言", "Language"), selection: Binding(
                     get: { vm.language }, set: { vm.setLanguage($0) })) {
                     Text("简体中文").tag("zh")
                     Text("English").tag("en")
                 }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            }
+            Section(vm.t("外观", "Appearance")) {
                 Picker(vm.t("外观", "Appearance"), selection: Binding(
                     get: { vm.appearance }, set: { vm.setAppearance($0) })) {
-                    Text(vm.t("跟随系统", "System")).tag("system")
-                    Text(vm.t("浅色", "Light")).tag("light")
-                    Text(vm.t("深色", "Dark")).tag("dark")
+                    Label(vm.t("跟随系统", "System"), systemImage: "circle.lefthalf.filled").tag("system")
+                    Label(vm.t("浅色", "Light"), systemImage: "sun.max").tag("light")
+                    Label(vm.t("深色", "Dark"), systemImage: "moon").tag("dark")
                 }
-            } label: {
-                Image(systemName: "gearshape").font(.system(size: 16))
+                .pickerStyle(.inline)
+                .labelsHidden()
             }
-            .menuStyle(.borderlessButton)
-            .frame(width: 30)
-            .help(vm.t("设置", "Settings"))
-            }
+        } label: {
+            Label(vm.t("设置", "Settings"), systemImage: "gearshape")
         }
-        .controlSize(.regular)
-        .frame(height: 54)
+        .menuIndicator(.hidden)
+        .help(vm.t("设置", "Settings"))
     }
-    
+
     private var scanningNoticeBanner: some View {
         HStack(spacing: 12) {
             Image(systemName: "iphone.radiowaves.left.and.right")
@@ -1349,7 +1518,7 @@ struct AirCardApp: App {
         WindowGroup {
             ContentView()
         }
-        .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .windowResizability(.contentSize)
     }
 }
