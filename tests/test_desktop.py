@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from PIL import Image
 from backend.aircard_desktop.engine import Engine
-from backend.aircard_desktop.storage import Store, read, save, identity
+from backend.aircard_desktop.storage import Store, read, save, put, identity
 from backend.aircard_desktop.service import Server
 from backend.aircard_desktop.worker import validate, target, ART, CACHE, SCANNED_CARD
 from backend.aircard_desktop.images import prepare
@@ -161,6 +161,24 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output[-1], output[-2])
         await server.handle({'v': 3, 'id': 'bad', 'method': 'hello'})
         self.assertEqual(output[-1]['error']['code'], 'INVALID_REQUEST')
+
+    async def test_overview_only_sends_changed_previews_when_requested(self):
+        await self.engine.operate('device-a', CARD, 'read')
+        server = Server(lambda _: None, self.engine)
+        first = (await server.dispatch('overview', {}))['cards'][0]
+        self.assertIn('preview', first)
+        key = first['deviceKey'] + ':' + first['card']
+        known = {'knownPreviews': {key: first['previewRevision']}}
+        unchanged = (await server.dispatch('overview', known))['cards'][0]
+        self.assertNotIn('preview', unchanged)
+        put(self.store.card('device-a', CARD) / 'preview.png', png('red'))
+        changed = (await server.dispatch('overview', known))['cards'][0]
+        self.assertNotEqual(changed['previewRevision'], first['previewRevision'])
+        self.assertIn('preview', changed)
+        (self.store.card('device-a', CARD) / 'preview.png').unlink()
+        removed = (await server.dispatch('overview', known))['cards'][0]
+        self.assertIsNone(removed['previewRevision'])
+        self.assertIsNone(removed['preview'])
 
     async def test_read_cancellation_restores_and_retains_no_pending(self):
         class CancelSession(MemorySession):

@@ -27,12 +27,22 @@ class Engine:
         if self.active:
             self.emit({"event": "progress", "operationId": self.active["id"], "stage": stage})
 
-    def overview(self):
+    def overview(self, known_previews=None):
+        known_previews = known_previews if isinstance(known_previews, dict) else {}
         cards = []
         for path in (self.store.root / "devices").glob("*/cards/*/card.json"):
             card = read(path)
             card["backup"] = (path.parent / "original" / "manifest.json").is_file()
-            card["preview"] = self.preview(path.parent / "preview.png")
+            preview_path = path.parent / "preview.png"
+            try:
+                info = preview_path.stat()
+                revision = f"{info.st_ino}:{info.st_size}:{info.st_mtime_ns}"
+            except FileNotFoundError:
+                revision = None
+            card["previewRevision"] = revision
+            key = card["deviceKey"] + ":" + card["card"]
+            if revision is None or known_previews.get(key) != revision:
+                card["preview"] = self.preview(preview_path)
             cards.append(card)
         pending = []
         for state in self.store.pending():

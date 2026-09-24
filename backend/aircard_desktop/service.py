@@ -97,7 +97,8 @@ class Server:
             return {"protocol": 1, "backend": "0.2.0", "legacyCandidates": import_legacy(self.engine.store),
                     "scanning": bool(self.scan_task and not self.scan_task.done()), **self.engine.overview()}
         if method == "overview":
-            return {"scanning": bool(self.scan_task and not self.scan_task.done()), **self.engine.overview()}
+            return {"scanning": bool(self.scan_task and not self.scan_task.done()),
+                    **self.engine.overview(p.get("knownPreviews"))}
         if method == "device":
             return await device_info()
         if method == "scan.start":

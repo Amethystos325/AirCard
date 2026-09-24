@@ -28,6 +28,7 @@ struct CardItem: Identifiable, Hashable {
     var customImage: NSImage?
     var preparedImageID: String?
     var cachedArtwork: NSImage?
+    var previewRevision: String?
     var cachedAssetNames: [String] = []
 
     static func == (lhs: CardItem, rhs: CardItem) -> Bool {
@@ -64,6 +65,7 @@ final class AppViewModel: ObservableObject {
     @Published var appearance = UserDefaults.standard.string(forKey: "aircard.appearance") ?? "system"
 
     let bridge = SwiftDesktopBridge()
+    private var refreshSequence = 0
 
     var visibleCards: [CardItem] {
         cards.filter { ($0.deviceKey == device?.key || device == nil) && !hiddenCards.contains($0.deviceKey + ":" + $0.id) }
@@ -79,12 +81,15 @@ final class AppViewModel: ObservableObject {
         do {
             try bridge.start()
             Task {
-                if let hello = try? await bridge.request("hello"),
-                   let legacy = hello["legacyCandidates"] as? [[String: Any]], !legacy.isEmpty {
-                    log(t("已保留 \(legacy.count) 张旧版卡片记录；请重新扫描以绑定当前设备。",
-                          "Kept \(legacy.count) legacy card records. Scan again to assign them to this device."))
+                if let hello = try? await bridge.request("hello") {
+                    if let legacy = hello["legacyCandidates"] as? [[String: Any]], !legacy.isEmpty {
+                        log(t("已保留 \(legacy.count) 张旧版卡片记录；请重新扫描以绑定当前设备。",
+                              "Kept \(legacy.count) legacy card records. Scan again to assign them to this device."))
+                    }
+                    applyOverview(hello)
+                } else {
+                    await refresh()
                 }
-                await refresh()
                 checkDevice()
             }
         } catch {
@@ -111,37 +116,54 @@ final class AppViewModel: ObservableObject {
     }
 
     func refresh() async {
+        refreshSequence += 1
+        let sequence = refreshSequence
         do {
-            let overview = try await bridge.request("overview")
-            let previous = Dictionary(uniqueKeysWithValues: cards.map { ($0.deviceKey + ":" + $0.id, $0) })
-            cards = (overview["cards"] as? [[String: Any]] ?? []).compactMap { row in
-                guard row["card"] is String, row["deviceKey"] is String,
-                      row["kind"] as? String == "secure-element" else { return nil }
-                let id = row["card"] as! String, key = row["deviceKey"] as! String
-                var card = CardItem(id: id, deviceKey: key,
-                                    label: row["label"] as? String ?? "",
-                                    backup: row["backup"] as? Bool ?? false)
-                card.cachedArtwork = decodeImage(row["preview"])
-                if let old = previous[key + ":" + id] {
-                    card.customImageURL = old.customImageURL
-                    card.customImage = old.customImage
-                    card.preparedImageID = old.preparedImageID
-                }
-                return card
-            }
-            pending = (overview["pending"] as? [[String: Any]] ?? []).compactMap { row in
-                guard let id = row["id"] as? String, let key = row["deviceKey"] as? String,
-                      let card = row["card"] as? String else { return nil }
-                return RecoveryItem(id: id, deviceKey: key, card: card,
-                                    canIsolate: row["canIsolate"] as? Bool ?? false)
-            }
-            unresolved = (overview["unresolved"] as? [[String: Any]] ?? []).compactMap { row in
-                guard let id = row["id"] as? String, let key = row["deviceKey"] as? String,
-                      let card = row["card"] as? String else { return nil }
-                return RecoveryItem(id: id, deviceKey: key, card: card, canIsolate: false)
-            }
-            isScanningCards = overview["scanning"] as? Bool ?? isScanningCards
+            let knownPreviews = Dictionary(uniqueKeysWithValues: cards.compactMap { card -> (String, String)? in
+                guard card.cachedArtwork != nil, let revision = card.previewRevision else { return nil }
+                return (card.deviceKey + ":" + card.id, revision)
+            })
+            let overview = try await bridge.request("overview", ["knownPreviews": knownPreviews])
+            guard sequence == refreshSequence else { return }
+            applyOverview(overview)
         } catch { report(error) }
+    }
+
+    private func applyOverview(_ overview: [String: Any]) {
+        let previous = Dictionary(uniqueKeysWithValues: cards.map { ($0.deviceKey + ":" + $0.id, $0) })
+        cards = (overview["cards"] as? [[String: Any]] ?? []).compactMap { row in
+            guard row["card"] is String, row["deviceKey"] is String,
+                  row["kind"] as? String == "secure-element" else { return nil }
+            let id = row["card"] as! String, key = row["deviceKey"] as! String
+            var card = CardItem(id: id, deviceKey: key,
+                                label: row["label"] as? String ?? "",
+                                backup: row["backup"] as? Bool ?? false)
+            card.previewRevision = row["previewRevision"] as? String
+            if let preview = row["preview"] as? String {
+                card.cachedArtwork = decodeImage(preview)
+            } else if let old = previous[key + ":" + id],
+                      let revision = card.previewRevision, revision == old.previewRevision {
+                card.cachedArtwork = old.cachedArtwork
+            }
+            if let old = previous[key + ":" + id] {
+                card.customImageURL = old.customImageURL
+                card.customImage = old.customImage
+                card.preparedImageID = old.preparedImageID
+            }
+            return card
+        }
+        pending = (overview["pending"] as? [[String: Any]] ?? []).compactMap { row in
+            guard let id = row["id"] as? String, let key = row["deviceKey"] as? String,
+                  let card = row["card"] as? String else { return nil }
+            return RecoveryItem(id: id, deviceKey: key, card: card,
+                                canIsolate: row["canIsolate"] as? Bool ?? false)
+        }
+        unresolved = (overview["unresolved"] as? [[String: Any]] ?? []).compactMap { row in
+            guard let id = row["id"] as? String, let key = row["deviceKey"] as? String,
+                  let card = row["card"] as? String else { return nil }
+            return RecoveryItem(id: id, deviceKey: key, card: card, canIsolate: false)
+        }
+        isScanningCards = overview["scanning"] as? Bool ?? isScanningCards
     }
 
     func checkDevice() {
