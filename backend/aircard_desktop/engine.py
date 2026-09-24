@@ -46,6 +46,8 @@ class Engine:
             cards.append(card)
         pending = []
         for state in self.store.pending():
+            if self.active and state["id"] == self.active["id"]:
+                continue  # A live operation is not a recovery request.
             row = {k: state[k] for k in ("id", "deviceKey", "card", "status")}
             journal = read(self.store.root / "transactions" / state["id"] / "transport" / "journal.json", {})
             entry = journal.get("pending") or {}

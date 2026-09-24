@@ -211,6 +211,7 @@ final class AppViewModel: ObservableObject {
         }
     }
     func stopCardScanning() {
+        statusText = t("正在核验已检测到的卡片…", "Checking the cards already detected…")
         Task {
             do {
                 _ = try await bridge.request("scan.stop")

@@ -54,8 +54,8 @@ LEGACY_STORE_PATH = Path.home() / ".lumicards_cards.json"
 PREDEFINED_CARDS = []
 
 CARD_REGEXES = [
-    re.compile(r"/(?:Cards|Passes/Cards)/([-A-Za-z0-9_+=]{20,44})(?:\.pkpass|\.cache|\.pkcache|/|\s|\"|\'|\)|,|$)"),
-    re.compile(r"/([-A-Za-z0-9_+=]{20,44})\.(?:pkpass|cache|pkcache)"),
+    re.compile(r"/(?:Cards|Passes/Cards)/([-A-Za-z0-9_+=]{20,64})(?:\.pkpass|\.cache|\.pkcache|/|\s|\"|\'|\)|,|$)", re.IGNORECASE),
+    re.compile(r"/([-A-Za-z0-9_+=]{20,64})\.(?:pkpass|cache|pkcache)", re.IGNORECASE),
     re.compile(r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{27}=)(?![A-Za-z0-9+/_-])"),
 ]
 

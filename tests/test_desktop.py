@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import plistlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -139,6 +140,15 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.recover(state['id'])
         self.assertFalse(self.store.pending())
 
+    async def test_live_operation_is_not_shown_as_pending_recovery(self):
+        state = {'id': 'a'*32, 'device': 'device-a', 'deviceKey': identity('device-a'),
+                 'card': CARD, 'mode': 'classify', 'status': 'running', 'originals': {}, 'writeStarted': False}
+        self.store.checkpoint(state)
+        self.engine.active = state
+        self.assertEqual(self.engine.overview()['pending'], [])
+        self.engine.active = None
+        self.assertEqual(self.engine.overview()['pending'][0]['id'], state['id'])
+
     async def test_unresolved_prewrite_can_be_isolated_without_losing_recovery_record(self):
         class IsolatingSession(MemorySession):
             isolated = False
@@ -257,6 +267,80 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
     def test_scanner_requires_wallet_context_for_hash_only_matches(self):
         self.assertEqual(card_candidates('unrelated token ' + CARD), [])
         self.assertEqual(card_candidates('Wallet resource /Cards/' + CARD + '.pkpass/pass.json'), [CARD])
+        longer = 'B' * 32
+        self.assertEqual(card_candidates('resource /cards/' + longer + '.pkpass/pass.json'), [longer])
+        self.assertEqual(card_candidates('resource /Cards/' + CARD[:-1] + '%3D.pkpass/pass.json'), [CARD])
+
+    async def test_scanner_drains_trace_while_classifying(self):
+        other = 'B' * 27 + '='
+        second_trace_seen = asyncio.Event()
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        calls = []
+        output = []
+
+        class Context:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *_): pass
+            async def send_plist(self, *_args, **_kwargs): pass
+            async def start_lockdown_service(self, *_args): return self
+
+        class SlowEngine:
+            def __init__(self, store):
+                self.store = store
+                self.lock = asyncio.Lock()
+                self.active = None
+            async def operate(self, device, card, mode):
+                calls.append(card)
+                if card == CARD:
+                    first_started.set()
+                    await asyncio.wait_for(second_trace_seen.wait(), .5)
+                    await release_first.wait()
+                return {'card': {'kind': 'secure-element'}}
+
+        server = Server(output.append, SlowEngine(self.store))
+        frames = 0
+        async def frame(_service):
+            nonlocal frames
+            frames += 1
+            if frames == 1: return 1, plistlib.dumps({'Status': 'RequestSuccessful'})
+            if frames == 2: return 2, ('/Cards/' + CARD + '.pkpass').encode()
+            if frames == 3:
+                second_trace_seen.set()
+                return 2, ('/Cards/' + other + '.pkpass').encode()
+            await asyncio.Event().wait()
+
+        with patch('backend.aircard_desktop.service.select_device', AsyncMock(return_value=Context())), \
+             patch('backend.aircard_desktop.service.trace_frame', frame), \
+             patch('backend.aircard_desktop.service.trace_text', side_effect=lambda packet: packet.decode()):
+            server.scan_task = asyncio.create_task(server.scan('device-a'))
+            await asyncio.wait_for(first_started.wait(), 1)
+            await asyncio.wait_for(second_trace_seen.wait(), 1)
+            stopping = asyncio.create_task(server.stop_scan(drain=True))
+            release_first.set()
+            await asyncio.wait_for(stopping, 2)
+        self.assertEqual(calls, [CARD, other])
+        self.assertFalse(any(row['event'] == 'scanError' for row in output))
+
+    async def test_scan_start_waits_for_device_log_subscription(self):
+        gate = asyncio.Event()
+
+        class DelayedServer(Server):
+            async def scan(inner, _device):
+                try:
+                    await gate.wait()
+                    inner.scan_ready.set()
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    pass
+
+        server = DelayedServer(lambda _: None, self.engine)
+        starting = asyncio.create_task(server.dispatch('scan.start', {'device': 'device-a'}))
+        await asyncio.sleep(.01)
+        self.assertFalse(starting.done())
+        gate.set()
+        self.assertEqual(await asyncio.wait_for(starting, 1), {'scanning': True})
+        await server.stop_scan()
 
     def test_recovery_worker_accepts_only_the_pending_asset(self):
         token = 'a' * 32

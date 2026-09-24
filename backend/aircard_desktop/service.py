@@ -3,15 +3,19 @@ import asyncio
 import json
 import os
 import plistlib
+import re
 import sys
 from collections import OrderedDict
+from urllib.parse import unquote
 
 from backend.aircard import CARD_REGEXES
 from backend.windows_probe import select_device, trace_frame, trace_text
 from .engine import Engine
 from .storage import identity, read
 from .transport import device_info
-from .worker import SCANNED_CARD
+from .worker import CARD, SCANNED_CARD
+
+ENCODED_CARD_PATH = re.compile(r"/(?:Cards|Passes/Cards)/([A-Za-z0-9_+=%\-]{20,192})\.(?:pkpass|cache|pkcache)", re.IGNORECASE)
 
 
 def card_candidates(message):
@@ -20,8 +24,21 @@ def card_candidates(message):
         return []
     if not any(word in lower for word in ("card", "pass", "payment", "uniqueid", "identifier", "face", "cache", "stockholm")):
         return []
-    return list(dict.fromkeys(match.group(1) for regex in CARD_REGEXES for match in regex.finditer(message)
-                              if SCANNED_CARD.fullmatch(match.group(1))))
+    candidates = []
+    for index, regex in enumerate(CARD_REGEXES):
+        for match in regex.finditer(message):
+            card = match.group(1)
+            # A full Wallet resource path is stronger evidence than an isolated
+            # hash. Keep the strict padded form for hash-only log messages.
+            if (CARD.fullmatch(card) and not card.startswith(("aircard-", "airlift-"))
+                    and (index < 2 or SCANNED_CARD.fullmatch(card))):
+                candidates.append(card)
+    for match in ENCODED_CARD_PATH.finditer(message):
+        if "%" in match.group(1):
+            card = unquote(match.group(1))
+            if CARD.fullmatch(card) and not card.startswith(("aircard-", "airlift-")):
+                candidates.append(card)
+    return list(dict.fromkeys(candidates))
 
 
 class Server:
@@ -33,6 +50,9 @@ class Server:
         self.requests = set()
         self.scan_task = None
         self.scan_stopping = False
+        self.scan_drain = False
+        self.scan_ready = None
+        self.scan_start_error = None
         self.closing = False
         self.tasks = set()
 
@@ -41,6 +61,8 @@ class Server:
 
     async def scan(self, device):
         seen = set()
+        attempts = {}
+        queue = asyncio.Queue(maxsize=256)
         try:
             async with await select_device(device) as client:
                 async with await client.start_lockdown_service("com.apple.os_trace_relay") as service:
@@ -49,55 +71,92 @@ class Server:
                     kind, initial = await trace_frame(service)
                     if kind != 1 or plistlib.loads(initial).get("Status") != "RequestSuccessful":
                         raise RuntimeError("TRACE_FAILED")
-                    while not self.scan_stopping:
-                        kind, packet = await trace_frame(service)
-                        text = trace_text(packet) if kind == 2 else None
-                        if not text:
-                            continue
-                        for card in card_candidates(text):
+                    if self.scan_ready:
+                        self.scan_ready.set()
+
+                    async def collect():
+                        # Keep draining the log while a slow device transfer
+                        # classifies an earlier card. Otherwise later card
+                        # selections can disappear from the trace stream.
+                        while not self.scan_stopping:
+                            kind, packet = await trace_frame(service)
                             if self.scan_stopping:
-                                return
-                            if card in seen:
+                                break
+                            text = trace_text(packet) if kind == 2 else None
+                            if not text:
                                 continue
-                            seen.add(card)
+                            for card in card_candidates(text):
+                                if card in seen or attempts.get(card, 0) >= 2:
+                                    continue
+                                seen.add(card)
+                                try:
+                                    queue.put_nowait(card)
+                                except asyncio.QueueFull:
+                                    seen.discard(card)
+                                    self.event({"event": "scanError", "code": "SCAN_BACKLOG"})
+
+                    reader = asyncio.create_task(collect())
+                    try:
+                        while not self.scan_stopping or (self.scan_drain and not queue.empty()):
+                            if reader.done() and queue.empty():
+                                await reader
+                                break
+                            try:
+                                card = await asyncio.wait_for(queue.get(), .25)
+                            except TimeoutError:
+                                continue
+                            if self.scan_stopping and not self.scan_drain:
+                                break
+                            attempts[card] = attempts.get(card, 0) + 1
                             if self.engine.store.quarantined_card(device, card):
                                 continue
                             self.event({"event": "candidate", "card": card})
                             stored = read(self.engine.store.card(device, card) / "card.json", {})
                             if (isinstance(stored, dict) and stored.get("card") == card
                                     and stored.get("deviceKey") == identity(device)
-                                    and stored.get("kind") == "secure-element"):
+                                    and stored.get("kind") in ("secure-element", "ordinary")):
                                 continue
-                            # Classification uses the same lock and durable restore as reads.
                             try:
                                 if self.engine.lock.locked():
+                                    raise RuntimeError("BUSY")
+                                result = await self.engine.operate(device, card, "classify")
+                                if result["card"]["kind"] == "unknown" and attempts[card] < 2:
                                     seen.discard(card)
-                                    continue
-                                await self.engine.operate(device, card, "classify")
                             except Exception as error:
-                                if error_code(error) == "BUSY":
+                                if not self.engine.store.pending(device) and attempts[card] < 2:
                                     seen.discard(card)
                                 self.event({"event": "scanError", "code": error_code(error)})
                                 if self.engine.store.pending(device):
                                     self.scan_stopping = True
                                     return
+                    finally:
+                        reader.cancel()
+                        try:
+                            await reader
+                        except asyncio.CancelledError:
+                            pass
         except asyncio.CancelledError:
-            pass
+            self.scan_start_error = "CANCELLED"
         except Exception as error:
+            self.scan_start_error = error_code(error)
             self.event({"event": "scanError", "code": error_code(error)})
         finally:
+            if self.scan_ready:
+                self.scan_ready.set()
             self.event({"event": "scanStopped"})
 
-    async def stop_scan(self):
+    async def stop_scan(self, drain=False):
+        self.scan_drain = drain
         self.scan_stopping = True
         task = self.scan_task
         if task and not task.done():
-            # Do not interrupt a classification's move/writeback operation.
-            if self.engine.active:
-                self.engine.cancel_requested = True
-                while self.engine.active:
-                    await asyncio.sleep(.1)
-            task.cancel()
+            if not drain:
+                # Do not interrupt a classification's move/writeback operation.
+                if self.engine.active:
+                    self.engine.cancel_requested = True
+                    while self.engine.active:
+                        await asyncio.sleep(.1)
+                task.cancel()
             await task
         self.scan_task = None
 
@@ -119,10 +178,22 @@ class Server:
             if self.engine.lock.locked():
                 raise RuntimeError("BUSY")
             self.scan_stopping = False
+            self.scan_drain = False
+            self.scan_ready = asyncio.Event()
+            self.scan_start_error = None
             self.scan_task = asyncio.create_task(self.scan(p["device"]))
+            try:
+                await asyncio.wait_for(self.scan_ready.wait(), 15)
+            except TimeoutError:
+                await self.stop_scan()
+                raise RuntimeError("TRACE_FAILED")
+            if self.scan_start_error:
+                raise RuntimeError(self.scan_start_error)
+            if self.scan_task.done():
+                raise RuntimeError("TRACE_FAILED")
             return {"scanning": True}
         if method == "scan.stop":
-            await self.stop_scan()
+            await self.stop_scan(drain=True)
             return {"scanning": False}
         if method == "image.prepare":
             return await asyncio.to_thread(self.engine.prepare_image, p["path"], p.get("crop"))
