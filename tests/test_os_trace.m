@@ -1,4 +1,4 @@
-#import "../macos/helpers/os_trace.h"
+#import "../frontend/swift/helpers/os_trace.h"
 #include <assert.h>
 
 typedef struct {

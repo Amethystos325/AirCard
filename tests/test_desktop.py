@@ -7,12 +7,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from PIL import Image
-from aircard_desktop.engine import Engine
-from aircard_desktop.storage import Store, read, save, identity
-from aircard_desktop.service import Server
-from aircard_desktop.worker import validate, target, ART, CACHE, SCANNED_CARD
-from aircard_desktop.images import prepare
-from aircard_desktop.transport import Session, native
+from backend.aircard_desktop.engine import Engine
+from backend.aircard_desktop.storage import Store, read, save, identity
+from backend.aircard_desktop.service import Server
+from backend.aircard_desktop.worker import validate, target, ART, CACHE, SCANNED_CARD
+from backend.aircard_desktop.images import prepare
+from backend.aircard_desktop.transport import Session, native
 
 CARD = 'A' * 27 + '='
 
@@ -215,12 +215,12 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError): validate(job)
 
     async def test_pending_remote_copy_must_match_saved_checksum(self):
-        from aircard_desktop.storage import sha
+        from backend.aircard_desktop.storage import sha
         session = Session(self.store, {'id': 'b'*32, 'card': CARD, 'device': 'device-a'})
         session.journal['pending'] = {'area': 'pkpass', 'leaf': 'pass.json', 'recovered': 'retained', 'sha256': sha(b'original')}
         session.afc = AsyncMock(); session.afc.exists.return_value = True
         session.transfer = AsyncMock()
-        with patch('aircard_desktop.transport.bounded_file', AsyncMock(return_value=b'corrupt')):
+        with patch('backend.aircard_desktop.transport.bounded_file', AsyncMock(return_value=b'corrupt')):
             with self.assertRaisesRegex(RuntimeError, 'INVALID_BACKUP'):
                 await session.recover_pending()
         session.transfer.assert_not_awaited()
@@ -265,9 +265,9 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
         async def remote_bytes(_afc, path, *_args):
             return b'aircard-desktop-staging' if path == source + '/payload' else b'canary'
 
-        with patch('aircard_desktop.transport.bounded_file', remote_bytes), \
-             patch('aircard_desktop.transport.canary_books', return_value=b'canary'), \
-             patch('aircard_desktop.transport.native', AsyncMock()) as replay:
+        with patch('backend.aircard_desktop.transport.bounded_file', remote_bytes), \
+             patch('backend.aircard_desktop.transport.canary_books', return_value=b'canary'), \
+             patch('backend.aircard_desktop.transport.native', AsyncMock()) as replay:
             with self.assertRaisesRegex(RuntimeError, 'RECOVERY_INDETERMINATE'):
                 await session.recover_pending()
             with self.assertRaisesRegex(RuntimeError, 'RECOVERY_INDETERMINATE'):
@@ -303,9 +303,9 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
             nonlocal moved
             moved = True
 
-        with patch('aircard_desktop.transport.bounded_file', remote_bytes), \
-             patch('aircard_desktop.transport.canary_books', return_value=b'canary'), \
-             patch('aircard_desktop.transport.native', replay):
+        with patch('backend.aircard_desktop.transport.bounded_file', remote_bytes), \
+             patch('backend.aircard_desktop.transport.canary_books', return_value=b'canary'), \
+             patch('backend.aircard_desktop.transport.native', replay):
             await session.recover_pending()
         session.transfer.assert_awaited_once_with('pkpass', 'pass.json', 'push', b'original')
         self.assertIsNone(session.journal['pending'])
@@ -318,8 +318,8 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
                                       'replayAttempted': True}
         session.afc = AsyncMock()
         session.afc.exists.return_value = False
-        with patch('aircard_desktop.transport.restore_books', AsyncMock()) as restore, \
-             patch('aircard_desktop.transport.books_match', AsyncMock(return_value=True)):
+        with patch('backend.aircard_desktop.transport.restore_books', AsyncMock()) as restore, \
+             patch('backend.aircard_desktop.transport.books_match', AsyncMock(return_value=True)):
             await session.isolate_unresolved()
         restore.assert_awaited_once()
         self.assertIsNotNone(session.journal['pending'])
@@ -354,8 +354,8 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone((await server.dispatch('overview', {}))['active'])
 
     def test_pdf_only_artwork_gets_preview(self):
-        from card_assets import build_card_assets
-        from aircard_desktop.images import artwork_preview
+        from backend.card_assets import build_card_assets
+        from backend.aircard_desktop.images import artwork_preview
         assets = dict(build_card_assets(png()))
         preview = artwork_preview({'cardBackgroundCombined.pdf': assets['cardBackgroundCombined.pdf']})
         with Image.open(io.BytesIO(preview)) as image:
@@ -370,7 +370,7 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
 
     @unittest.skipUnless(__import__('sys').platform == 'win32', 'Windows sharing semantics')
     def test_atomic_replace_retries_transient_windows_share_denial(self):
-        from aircard_desktop.storage import put
+        from backend.aircard_desktop.storage import put
         import os
         replace = os.replace
         error = PermissionError('sharing violation'); error.winerror = 32
@@ -379,12 +379,12 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
             calls.append(destination)
             if len(calls) == 1: raise error
             return replace(source, destination)
-        with patch('aircard_desktop.storage.os.replace', side_effect=shared):
+        with patch('backend.aircard_desktop.storage.os.replace', side_effect=shared):
             put(self.root / 'journal.json', b'verified')
         self.assertEqual((self.root / 'journal.json').read_bytes(), b'verified')
 
     def test_legacy_import_does_not_create_device_backup(self):
-        from aircard_desktop.migration import import_legacy
+        from backend.aircard_desktop.migration import import_legacy
         source = self.root / '.aircard_cards.json'
         source.write_text(json.dumps([CARD]))
         rows = import_legacy(self.store, self.root, self.root / 'empty-cache')

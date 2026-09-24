@@ -1,6 +1,6 @@
 # DittoCard：依赖与双端本地构建
 
-本文适用于 `desktop/` 下的 Tauri 2 + React + TypeScript + Python 桌面客户端。所有测试、打包和安装验收均在本地完成，不使用 GitHub Actions / CI。Windows 已完成本机构建和 Suica 真机验证；macOS 27 arm64 已完成本机构建、启动与设备自动发现，Intel 构建和 iPhone 卡片流程仍待执行，详见[验证记录](desktop-validation.md)。
+本文适用于 `frontend/cross-platform/` 下的 Tauri 2 + React + TypeScript + Python 桌面客户端。所有测试、打包和安装验收均在本地完成，不使用 GitHub Actions / CI。Windows 已完成本机构建和 Suica 真机验证；macOS 27 arm64 已完成本机构建、启动与设备自动发现，Intel 构建和 iPhone 卡片流程仍待执行，详见[验证记录](desktop-validation.md)。
 
 ## 运行安装版需要什么
 
@@ -35,7 +35,7 @@ USB 连接成功不代表允许写入。当前桌面客户端沿用 iOS 27.0、b
 | --- | --- | --- |
 | Git | 能正常克隆仓库 | 获取源码 |
 | Node.js | 22，本机验证版本为 22.22 | 前端构建及打包脚本 |
-| pnpm | 11.7.0，与 `desktop/package.json` 一致 | 安装前端依赖、执行构建 |
+| pnpm | 11.7.0，与 `frontend/cross-platform/package.json` 一致 | 安装前端依赖、执行构建 |
 | Rust / Cargo | 1.98.1，通过 rustup 安装 | Tauri 桌面程序 |
 | Python | 3.12，Windows 使用 x64；Mac 使用与目标架构一致的解释器 | 后端、测试、PyInstaller |
 | Windows 编译工具 | VS 2022 Build Tools，勾选“使用 C++ 的桌面开发”、MSVC v143 x64/x86 工具及 Windows SDK | Rust 的 MSVC 链接工具 |
@@ -43,7 +43,7 @@ USB 连接成功不代表允许写入。当前桌面客户端沿用 iOS 27.0、b
 
 Windows 开发也需要 WebView2。平台工具的官方安装说明见 [Tauri 前置依赖](https://v2.tauri.app/start/prerequisites/)；Rust 使用 [rustup](https://www.rust-lang.org/tools/install)，Node.js 使用 [官方安装包](https://nodejs.org/en/download)。首次安装和构建需要联网下载依赖及打包工具。
 
-Python 依赖由根目录 `requirements-desktop.lock` 锁定，包含 Pillow、ReportLab、pypdfium2、pymobiledevice3、pefile、PyInstaller 等；不需要逐个手工安装。前端使用 `pnpm-lock.yaml`，Rust 使用 `Cargo.lock`；`pnpm bundle` 会向 Cargo 传入 `--locked`。修改源码后的日常构建不要主动升级这些依赖。
+Python 依赖由 `backend/requirements-desktop.lock` 锁定，包含 Pillow、ReportLab、pypdfium2、pymobiledevice3、pefile、PyInstaller 等；不需要逐个手工安装。前端使用 `pnpm-lock.yaml`，Rust 使用 `Cargo.lock`；`pnpm bundle` 会向 Cargo 传入 `--locked`。修改源码后的日常构建不要主动升级这些依赖。
 
 ## Windows 11 x64 构建（PowerShell 7）
 
@@ -65,14 +65,14 @@ py -3.12 -c "import platform, struct; print(platform.python_version(), struct.ca
 
 # 根目录：创建 Python 3.12 x64 环境并安装锁定依赖
 py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-desktop.lock
+.\.venv\Scripts\python.exe -m pip install -r backend/requirements-desktop.lock
 $env:AIRCARD_PYTHON = (Resolve-Path .venv/Scripts/python.exe).Path
 
 # 根目录：运行后端测试
 & $env:AIRCARD_PYTHON -m unittest discover -s tests -q
 
 # desktop 目录：前端测试、后端打包、安装包构建
-Set-Location desktop
+Set-Location frontend/cross-platform
 pnpm install --frozen-lockfile
 pnpm test
 pnpm package:backend
@@ -85,13 +85,13 @@ Python 版本检查应显示 `3.12.x 64`，Rust host 应为 `x86_64-pc-windows-m
 
 产物（相对于仓库根目录）：
 
-- 安装包：`desktop/src-tauri/target/release/bundle/nsis/DittoCard_0.2.0_x64-setup.exe`，版本号会随项目版本变化。
-- 桌面程序：`desktop/src-tauri/target/release/DittoCard.exe`。
-- 冻结后端：`build/desktop-backend/aircard-backend/`；打包脚本将其复制到 `desktop/src-tauri/binaries/backend/` 作为应用资源。
+- 安装包：`frontend/cross-platform/src-tauri/target/release/bundle/nsis/DittoCard_0.2.0_x64-setup.exe`，版本号会随项目版本变化。
+- 桌面程序：`frontend/cross-platform/src-tauri/target/release/DittoCard.exe`。
+- 冻结后端：`build/desktop-backend/aircard-backend/`；打包脚本将其复制到 `frontend/cross-platform/src-tauri/binaries/backend/` 作为应用资源。
 
 交付 NSIS 安装包。单独复制桌面 exe 或后端 exe 会遗漏资源；后端必须保留完整目录结构。
 
-开发调试：完成上面依赖安装与 `pnpm package:backend` 后，在 `desktop/` 执行 `pnpm dev`。新开终端时，先从根目录重新设置 `AIRCARD_PYTHON`，再进入 `desktop/`。仅预览网页使用 `pnpm web`，不连接真实后端。
+开发调试：完成上面依赖安装与 `pnpm package:backend` 后，在 `frontend/cross-platform/` 执行 `pnpm dev`。新开终端时，先从根目录重新设置 `AIRCARD_PYTHON`，再进入 `frontend/cross-platform/`。仅预览网页使用 `pnpm web`，不连接真实后端。
 
 ## macOS 14+ 构建（zsh / bash）
 
@@ -121,14 +121,14 @@ python3.12 -c 'import platform; print(platform.python_version(), platform.machin
 xcode-select -p
 
 # 根目录：原生 helper 和 Python 环境
-make all
+make -C frontend/swift all
 python3.12 -m venv .venv
-.venv/bin/python -m pip install -r requirements-desktop.lock
+.venv/bin/python -m pip install -r backend/requirements-desktop.lock
 export AIRCARD_PYTHON="$PWD/.venv/bin/python"
 "$AIRCARD_PYTHON" -m unittest discover -s tests -q
 
 # desktop 目录：测试、打包后端和 app / DMG
-cd desktop
+cd frontend/cross-platform
 pnpm install --frozen-lockfile
 pnpm test
 pnpm package:backend
@@ -136,15 +136,15 @@ unset VITE_E2E AIRCARD_DATA_DIR
 pnpm bundle --config src-tauri/tauri.macos.conf.json
 ```
 
-`make all` 当前生成最低系统版本 14.0 的 Universal `build/device_helper`、`build/airtraffic_host`，并进行本地 ad-hoc 签名。Tauri 后端打包脚本会在 PyInstaller 完成后原样复制 `airtraffic_host`，保留其系统 Framework 链接；桌面 app 和 Python 后端仍按本机架构生成。这里不包含公开发行签名或公证。
+`make -C frontend/swift all` 当前生成最低系统版本 14.0 的 Universal `build/device_helper`、`build/airtraffic_host`，并进行本地 ad-hoc 签名。Tauri 后端打包脚本会在 PyInstaller 完成后原样复制 `airtraffic_host`，保留其系统 Framework 链接；桌面 app 和 Python 后端仍按本机架构生成。这里不包含公开发行签名或公证。
 
-产物：`desktop/src-tauri/target/release/bundle/macos/` 下的 `.app`，以及 `desktop/src-tauri/target/release/bundle/dmg/` 下的 `.dmg`。从 DMG 安装 app 后再验收。开发调试同样在设置 `AIRCARD_PYTHON`、构建 helper 和打包后端之后，于 `desktop/` 执行 `pnpm dev`。
+产物：`frontend/cross-platform/src-tauri/target/release/bundle/macos/` 下的 `.app`，以及 `frontend/cross-platform/src-tauri/target/release/bundle/dmg/` 下的 `.dmg`。从 DMG 安装 app 后再验收。开发调试同样在设置 `AIRCARD_PYTHON`、构建 helper 和打包后端之后，于 `frontend/cross-platform/` 执行 `pnpm dev`。
 
 两个架构使用各自独立的 checkout / 构建目录，不复用另一种架构的 `.venv`、`node_modules`、`target` 或冻结后端。当前 Windows 机器不能完成 Mac 本地构建验收。
 
 ## 桌面冒烟与安装验收
 
-以下可选自动化冒烟命令均从 `desktop/` 执行，先完成 `pnpm package:backend`。它们使用独立测试数据目录、测试应用标识和测试驱动；不替代真机验收。
+以下可选自动化冒烟命令均从 `frontend/cross-platform/` 执行，先完成 `pnpm package:backend`。它们使用独立测试数据目录、测试应用标识和测试驱动；不替代真机验收。
 
 Windows PowerShell：
 
@@ -183,21 +183,21 @@ pnpm bundle --config src-tauri/tauri.macos.conf.json
 | Windows 找不到 `link.exe` 或 MSVC 链接失败 | 检查 VS Build Tools 的 C++ 工作负载、MSVC 和 Windows SDK；使用 MSVC Rust toolchain |
 | `pnpm` 找不到或版本不符 | 使用 `npm install -g pnpm@11.7.0`，重开终端并检查版本 |
 | 找不到 Python、PyInstaller 或脚本访问 `.tmp/windows-prototype-py312` | 显式设置 `AIRCARD_PYTHON` 为当前 `.venv` 解释器的绝对路径；从仓库根目录安装锁定 Python 依赖 |
-| 缺少 `binaries/backend` 或冻结资源 | 在 `desktop/` 先运行 `pnpm package:backend`，再运行 `pnpm dev` / `pnpm bundle` |
-| Mac 缺少 `airtraffic_host` 或原生 framework 链接失败 | 检查 Command Line Tools 和所选 SDK，先在根目录运行 `make all`；保留实际错误用于 Mac 验收 |
+| 缺少 `binaries/backend` 或冻结资源 | 在 `frontend/cross-platform/` 先运行 `pnpm package:backend`，再运行 `pnpm dev` / `pnpm bundle` |
+| Mac 缺少 `airtraffic_host` 或原生 framework 链接失败 | 检查 Command Line Tools 和所选 SDK，先在根目录运行 `make -C frontend/swift all`；保留实际错误用于 Mac 验收 |
 | 构建成功但无法发现 iPhone | 构建不要求手机在线；真机通信另需 Apple 组件、解锁和信任，按本文运行依赖排查 |
 | `1420` 端口被占用 | 检查是否已有本项目 Vite 服务，复用或正常停止旧开发会话 |
 | 后端 DLL / exe 文件被占用 | 正常关闭使用该构建目录的应用及测试窗口，等后端安全退出后重试 |
 
 ## SwiftUI 构建入口
 
-SwiftUI 版只在 Mac 构建，仍使用仓库根目录 `build.sh`，与本文 Tauri 入口不同。先准备 Python 3.12 环境和锁定依赖：
+SwiftUI 版只在 Mac 构建，从仓库根目录运行 `frontend/swift/build.sh`。先准备 Python 3.12 环境和锁定依赖：
 
 ```sh
 # macOS，仓库根目录
 python3.12 -m venv .venv
-.venv/bin/python -m pip install -r requirements-desktop.lock
-./build.sh
+.venv/bin/python -m pip install -r backend/requirements-desktop.lock
+./frontend/swift/build.sh
 ```
 
 生成当前架构的 `build/DittoCard.app` 和 `build/DittoCard.dmg`。脚本保留其他 `build/` 产物，并为 SwiftUI 应用冻结与本机架构匹配的事务后端。若要 Universal 应用，分别准备 arm64 与 x86_64 的 Python 环境，设置 `AIRCARD_PYTHON_ARM64`、`AIRCARD_PYTHON_X86_64` 及 `AIRCARD_SWIFT_ARCHES="arm64 x86_64"`。不要在 Windows 上用该脚本构建桌面客户端。

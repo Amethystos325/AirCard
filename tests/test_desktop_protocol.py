@@ -12,7 +12,7 @@ from pathlib import Path
 class ProtocolProcessTests(unittest.TestCase):
     def test_fragmented_invalid_replayed_and_oversized_lines(self):
         with tempfile.TemporaryDirectory() as directory:
-            process = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parents[1] / 'desktop_backend.py')],
+            process = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parents[1] / 'backend' / 'desktop_backend.py')],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 env={**os.environ, 'AIRCARD_DATA_DIR': directory})
             responses = queue.Queue()

@@ -37,7 +37,7 @@ has not been tested. Other device and OS combinations still need verification.
 
 ```sh
 python3 -m unittest discover -s tests -v
-bash build.sh
+bash frontend/swift/build.sh
 ```
 
 Scanner tests cover fragmented and coalesced frames, the different byte orders

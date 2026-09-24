@@ -1,6 +1,6 @@
 # DittoCard 验证记录
 
-本项目使用本地测试、构建和安装验收，不使用 GitHub Actions / CI。复现步骤见 `../desktop/README.md`；各平台结果仅由对应本地环境的实际执行确认。
+本项目使用本地测试、构建和安装验收，不使用 GitHub Actions / CI。复现步骤见 `../frontend/cross-platform/README.md`；各平台结果仅由对应本地环境的实际执行确认。
 以下旧产物记录保留构建时的 `AirCard Desktop` 文件名与校验值；新构建的产品名为 `DittoCard`。
 
 日期：2026-09-23。Windows 11 x64，iPhone14,2，iOS 27.0 / 24A437。唯一更换测试卡片：用户明确指定的 Suica（卡片元数据为 JR 东日本）。不记录设备序列号或卡片标识。
@@ -41,13 +41,13 @@ SHA-256：`410b9db9a882f1e39fae445d40219fbb47cd98e1f1398a6ab9289b1f402d1728`。
 
 基于 `a135110`，移除桌面 GitHub Actions 工作流并更新本地构建文档后，在 Windows 11 x64 再次执行：后端 65 项通过、2 项 macOS 测试跳过；前端 4 项通过；`pnpm bundle` 完成 TypeScript / Vite、Rust release 和 NSIS 打包。复用先前已验证的冻结后端资源；本轮未重新执行安装与真机写入。
 
-本次产物：`desktop/src-tauri/target/release/bundle/nsis/AirCard Desktop_0.2.0_x64-setup.exe`。
+本次产物：`frontend/cross-platform/src-tauri/target/release/bundle/nsis/AirCard Desktop_0.2.0_x64-setup.exe`。
 
 SHA-256：`d6cc9a7b23ee449eaff7f8c4fdb5be075eec732073fe22986d0c163434b4b198`。上面的 `build/` 交付副本及其安装验收记录保持对应原产物。
 
 ## 原版 UI 复刻复核（2026-09-23）
 
-- 参照 `macos/swiftui/AirCardApp.swift` 恢复紧凑顶栏、设备胶囊、卡片内操作、扫描提示、空状态引导和底部日志；加入 CSS 半透明材质、倾斜光泽、读取扫光及大图缩放。
+- 参照 `frontend/swift/swiftui/AirCardApp.swift` 恢复紧凑顶栏、设备胶囊、卡片内操作、扫描提示、空状态引导和底部日志；加入 CSS 半透明材质、倾斜光泽、读取扫光及大图缩放。
 - 前端 8 项测试通过，覆盖选图和原生拖放只进入预览、明确点击才写入、卡片内读取锁定、大图查看、会话内隐藏及恢复、双语和日志。
 - Windows WebdriverIO 冒烟 1 项通过，验证冻结后端、语言和主题。测试配置使用独立应用标识；结束时走正常窗口关闭和后端安全退出流程。测试驱动清理会输出非阻断警告，最终测试进程退出码为 0，无测试后端驻留。
 - 使用合成卡片在本地浏览器检查 1100 × 780 和 820 × 600 窗口、浅色 / 深色、中文、更换预览和大图适应窗口。本轮未执行真实卡面写入，macOS 视觉尚未实机对照。
@@ -66,7 +66,7 @@ SHA-256：`1cf8d835653672e1ef3e517bb16a7b623ef78293814531a7176e1201e3ce1e7d`。�
 - 设备自动发现和扫描已执行。扫描中的 `pass.json` 读取未能取得预期的恢复副本，因此无法确认原文件位置；这不等于已证实手机原文件缺失。Books 中的临时同步条目已按原快照恢复，没有开始写入卡面。用户目视检查 Wallet 未见异常后，将此次未解决的事务归档，保留完整本地恢复数据和设备暂存；对应卡片继续隔离，其他卡片可以扫描。此处不将真机卡片流程标记为通过。
 - 新增一次性恢复重试及扫描遇到待恢复事务时自动停止的处理。归档后再次构建并启动 `.app`，待恢复提示已消失，其他卡片扫描入口可用；未安装到另一台 Mac，macOS 14 到 26 的实际运行也尚未验证。
 
-产物：`desktop/src-tauri/target/release/bundle/dmg/AirCard Desktop_0.2.0_aarch64.dmg`。SHA-256：`95d2d24683169060ad43a3794fd66dcd93877acafbea2e5821b8da605056b12c`；`hdiutil verify` 通过。本地测试包未做发行签名或公证。
+产物：`frontend/cross-platform/src-tauri/target/release/bundle/dmg/AirCard Desktop_0.2.0_aarch64.dmg`。SHA-256：`95d2d24683169060ad43a3794fd66dcd93877acafbea2e5821b8da605056b12c`；`hdiutil verify` 通过。本地测试包未做发行签名或公证。
 
 ## 待对应环境验收
 

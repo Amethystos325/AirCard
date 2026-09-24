@@ -9,9 +9,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import aircard_backend
-import card_cache
-import card_export
+from backend import aircard_backend
+from backend import card_cache
+from backend import card_export
 
 
 HASH = "b" * 27 + "="

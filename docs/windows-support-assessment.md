@@ -20,13 +20,13 @@ AirTraffic 操作。应先验证这部分，再投入完整界面和安装包开
 
 | 部分 | 代码位置 | Windows 所需工作 |
 | --- | --- | --- |
-| 桌面界面 | `macos/swiftui/AirCardApp.swift` | 使用 SwiftUI、AppKit、PDFKit；需要新增 Windows 界面或跨平台界面 |
-| 设备连接、日志、文件传输 | `macos/helpers/device_helper.m` | Objective-C/Foundation + MobileDevice 私有接口；需要 Windows 实现 |
-| AirTraffic 同步 | `macos/helpers/airtraffic_host.m` | 直接链接 AirTrafficHost.framework；需要验证 Windows DLL 接口或实现通信协议 |
+| 桌面界面 | `frontend/swift/swiftui/AirCardApp.swift` | 使用 SwiftUI、AppKit、PDFKit；需要新增 Windows 界面或跨平台界面 |
+| 设备连接、日志、文件传输 | `frontend/swift/helpers/device_helper.m` | Objective-C/Foundation + MobileDevice 私有接口；需要 Windows 实现 |
+| AirTraffic 同步 | `frontend/swift/helpers/airtraffic_host.m` | 直接链接 AirTrafficHost.framework；需要验证 Windows DLL 接口或实现通信协议 |
 | 图片处理 | `card_assets.py`、`aircard_backend.py`、`aircard.py` | PNG 转 PDF 强制使用 `/usr/bin/sips`；需要跨平台转换器并检查输出效果 |
 | 恢复备份、缓存 | `card_export.py`、`card_cache.py` | POSIX 目录 `open/fsync` 在 Windows 报错；需要平台化持久化操作 |
 | 路径、进程和终端扫描 | `aircard.py`、`aircard_backend.py`、`apply_card_skin.py` | 修正 PATH 分隔符、工具后缀、存储路径、UTF-8 编码和管道读取 |
-| 打包 | `Makefile`、`build.sh` | 新增 Windows 构建入口和安装包，不使用 xcrun、codesign、lipo、DMG |
+| 打包 | `frontend/swift/Makefile`、`frontend/swift/build.sh` | 新增 Windows 构建入口和安装包，不使用 xcrun、codesign、lipo、DMG |
 
 另有几个容易漏掉的问题：
 

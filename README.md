@@ -14,15 +14,12 @@
 
 | 目录或文件 | 用途 |
 | --- | --- |
-| `macos/swiftui/` | 原生 macOS 界面与 Swift 桥接代码；由根目录 `build.sh` 编译。 |
-| `macos/helpers/` | 原生设备通信与 AirTraffic helper；由根目录 `Makefile` 编译。 |
-| `desktop/` | Tauri、React 和 Rust 桌面客户端，支持 Windows 与 macOS。 |
-| `aircard_desktop/` | 两个桌面客户端共用的 Python 事务、存储、设备通信和图片处理代码。 |
-| 根目录 Python 文件 | 后端入口、旧版 CLI 及其仍在使用的兼容模块；Windows 诊断原型也从这里启动。 |
-| `macos/assets/` | SwiftUI 图标和 DMG 打包素材。 |
+| `backend/` | 共用 Python 后端、旧版 CLI、Windows 诊断代码、依赖清单与后端打包配置；`backend/aircard_desktop/` 存放事务和设备通信模块。 |
+| `frontend/swift/` | SwiftUI 界面、原生 helper、素材、`build.sh` 与 `Makefile`。 |
+| `frontend/cross-platform/` | Tauri、React 和 Rust 桌面客户端，支持 Windows 与 macOS。 |
 | `tests/`、`docs/` | 自动化测试与使用、构建文档。 |
 
-`build/`、`.venv/`、`desktop/node_modules/` 和 `desktop/src-tauri/target/` 是本地构建或依赖目录，已由 Git 忽略。不要删除 `~/Library/Application Support/AirCardDesktop/` 中的备份与未完成事务数据。
+`build/`、`.venv/`、`frontend/cross-platform/node_modules/` 和 `frontend/cross-platform/src-tauri/target/` 是本地构建或依赖目录，已由 Git 忽略。不要删除 `~/Library/Application Support/AirCardDesktop/` 中的备份与未完成事务数据。
 
 ---
 
@@ -39,7 +36,7 @@
 
 ### Windows / macOS (new desktop test client)
 
-The new `desktop/` application uses Tauri 2, React, TypeScript and a bundled
+The new `frontend/cross-platform/` application uses Tauri 2, React, TypeScript and a bundled
 Python backend. It includes bilingual UI, image cropping, per-device backups,
 transaction recovery and Windows NSIS packaging. A real Suica completed the
 Windows backup → replace → restore cycle; the user confirmed both artwork
@@ -52,7 +49,7 @@ are not redistributed; Apple Devices-only and legacy desktop iTunes setups have
 not been validated.
 
 See [Windows dependencies and local build instructions for both platforms](docs/desktop-build.md),
-[desktop usage](desktop/README.md), and
+[desktop usage](frontend/cross-platform/README.md), and
 [validation results and remaining checks](docs/desktop-validation.md).
 
 ### Windows diagnostic prototype
@@ -150,9 +147,9 @@ Builds and validation run locally; this project does not use GitHub Actions / CI
 
 The desktop client uses Node.js 22, pnpm 11.7.0, Rust 1.98.1 and Python 3.12.
 Windows additionally needs the VS 2022 C++ Build Tools and WebView2; macOS needs
-Xcode Command Line Tools and the native helper built with `make all`.
+Xcode Command Line Tools and the native helper built with `make -C frontend/swift all`.
 After dependency installation and tests, run `pnpm package:backend`, then
-`pnpm bundle` from `desktop/`; on macOS add
+`pnpm bundle` from `frontend/cross-platform/`; on macOS add
 `--config src-tauri/tauri.macos.conf.json`. The full guide covers interpreter
 selection, architecture matching, output paths and installed-app validation.
 
@@ -172,16 +169,16 @@ Install Python 3.12 and the locked desktop dependencies before building:
 git clone https://github.com/Amethystos325/AirCard.git
 cd AirCard
 python3.12 -m venv .venv
-.venv/bin/python -m pip install -r requirements-desktop.lock
-chmod +x build.sh
-./build.sh
+.venv/bin/python -m pip install -r backend/requirements-desktop.lock
+chmod +x frontend/swift/build.sh
+./frontend/swift/build.sh
 ```
 This builds for the current Mac architecture and produces `build/DittoCard.app`
 and `build/DittoCard.dmg`. For a universal SwiftUI app, provide an arm64 and an
 x86_64 Python 3.12 environment with the locked dependencies on an Apple Silicon
 Mac with Rosetta, then set
 `AIRCARD_PYTHON_ARM64`, `AIRCARD_PYTHON_X86_64`, and
-`AIRCARD_SWIFT_ARCHES="arm64 x86_64"` when running `build.sh`. The app bundle
+`AIRCARD_SWIFT_ARCHES="arm64 x86_64"` when running `frontend/swift/build.sh`. The app bundle
 includes one frozen backend per architecture. macOS card read, apply, restore,
 and recovery operations still require real-device validation on the target
 Mac/iOS build; a successful build does not establish device compatibility.

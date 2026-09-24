@@ -8,8 +8,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import aircard_backend
-import apply_card_skin
+from backend import aircard_backend
+from backend import apply_card_skin
 
 
 PNG_1X1 = base64.b64decode(

@@ -63,23 +63,23 @@ Python 3.13 在本机安装完整 pymobiledevice3 依赖时，因 lzfse 缺少�
 
 ```powershell
 # 创建独立环境并安装锁定版本依赖；随后执行组件检查。
-.\run_windows_probe.ps1 -Setup
+.\backend\run_windows_probe.ps1 -Setup
 
 # 设备保持解锁，并确认已信任这台电脑。
-.\run_windows_probe.ps1 -Command device
-.\run_windows_probe.ps1 -Command services
-.\run_windows_probe.ps1 -Command trace -Seconds 15
+.\backend\run_windows_probe.ps1 -Command device
+.\backend\run_windows_probe.ps1 -Command services
+.\backend\run_windows_probe.ps1 -Command trace -Seconds 15
 
 # 仅使用新生成的 Media 测试文件。
-.\run_windows_probe.ps1 -Command afc-canary
+.\backend\run_windows_probe.ps1 -Command afc-canary
 
 # 读取初始同步消息，与测试同步是否就绪是两个不同步骤。
-.\run_windows_probe.ps1 -Command atc-handshake
-.\run_windows_probe.ps1 -Command atc-sync-check
+.\backend\run_windows_probe.ps1 -Command atc-handshake
+.\backend\run_windows_probe.ps1 -Command atc-sync-check
 
 # 前置同步检查通过后，测试随机 /var/tmp 文件的完整循环。
 # 会暂时更改 Books 同步输入；成功时校验恢复并清理测试数据。
-.\run_windows_probe.ps1 -Command airlift-canary
+.\backend\run_windows_probe.ps1 -Command airlift-canary
 ```
 
 多个 USB 设备连接时使用 `-Udid` 指定目标。用 `-Report` 指定 JSON 输出位置；
@@ -94,11 +94,11 @@ Apple Devices、传统桌面 iTunes 和 ARM64 环境尚未验证。
 
 ## 实现与兼容性发现
 
-- `windows_probe.py`：环境与 PE 导出检查、USB 配对、服务、日志、AFC、隔离子进程。
-- `windows_airtraffic.py`：ctypes 调用 Windows Apple DLL，遵循已有 macOS helper 的消息顺序。
-- `windows_apple_runtime.py`：worker 内的 Store CoreFP 路径适配及退出清理。
+- `backend/windows_probe.py`：环境与 PE 导出检查、USB 配对、服务、日志、AFC、隔离子进程。
+- `backend/windows_airtraffic.py`：ctypes 调用 Windows Apple DLL，遵循已有 macOS helper 的消息顺序。
+- `backend/windows_apple_runtime.py`：worker 内的 Store CoreFP 路径适配及退出清理。
 - `windows_canary.py`：随机测试路径、Books 备份校验、失败恢复和受限清理。
-- `run_windows_probe.ps1`：Windows 启动和环境安装入口。
+- `backend/run_windows_probe.ps1`：Windows 启动和环境安装入口。
 
 本机 iTunes 对 pymobiledevice3 默认 `qt4i-usbmuxd / pymobiledevice3` 标识的 Connect
 请求发生超时；相同请求改用 AirCard 标识后成功。原型仅在自己的进程中适配请求标识，
@@ -111,7 +111,7 @@ Apple Devices、传统桌面 iTunes 和 ARM64 环境尚未验证。
 
 本机 Store 包中的 CoreFP 注册位于包内 Registry.dat，LibraryPath 使用包根路径占位符。
 普通未打包进程不能假设拥有 iTunes 的包内运行环境。
-`windows_apple_runtime.py` 创建进程私有 hive，仅在 AirTrafficHost 导入表中重定向
+`backend/windows_apple_runtime.py` 创建进程私有 hive，仅在 AirTrafficHost 导入表中重定向
 `RegOpenKeyExA/W` 对这一精确 HKLM 键的查询。其余键仍走系统 API，
 Apple 的认证函数与 DLL 文件保持原样。worker 退出前恢复导入表并删除私有 hive。
 这是针对已验证 x64 版本的实验适配；没有系统/用户注册表改动或 Apple DLL 再分发。

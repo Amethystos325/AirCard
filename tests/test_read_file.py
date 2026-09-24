@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import apply_card_skin
+from backend import apply_card_skin
 
 
 def _ok(extra=None):

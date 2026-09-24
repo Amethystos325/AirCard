@@ -10,10 +10,10 @@ import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-import windows_canary as canary
-import windows_probe as probe
-from windows_airtraffic import validate_canary_assets
-from windows_apple_runtime import is_corefp_lookup
+from backend import windows_canary as canary
+from backend import windows_probe as probe
+from backend.windows_airtraffic import validate_canary_assets
+from backend.windows_apple_runtime import is_corefp_lookup
 
 
 class MemoryAFC:

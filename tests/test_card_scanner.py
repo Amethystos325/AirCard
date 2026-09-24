@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aircard import CARD_REGEXES
+from backend.aircard import CARD_REGEXES
 
 
 @unittest.skipUnless(sys.platform == "darwin", "The native log reader requires macOS")
