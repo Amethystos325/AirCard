@@ -59,6 +59,8 @@ final class AppViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var exportMessage: String?
     @Published var hiddenCards: Set<String> = []
+    @Published private(set) var hiddenRecoveryReminders = Set(
+        UserDefaults.standard.stringArray(forKey: "aircard.hiddenRecoveryReminders") ?? [])
     /// User-chosen display order as "deviceKey:cardID" keys, shared by the card and gallery views.
     @Published private(set) var cardOrder = UserDefaults.standard.stringArray(forKey: "aircard.cardOrder") ?? []
     @Published var language = UserDefaults.standard.string(forKey: "aircard.language") ?? "zh"
@@ -162,6 +164,11 @@ final class AppViewModel: ObservableObject {
             guard let id = row["id"] as? String, let key = row["deviceKey"] as? String,
                   let card = row["card"] as? String else { return nil }
             return RecoveryItem(id: id, deviceKey: key, card: card, canIsolate: false)
+        }
+        let currentReminders = Set(unresolved.map(\.id))
+        if !hiddenRecoveryReminders.isSubset(of: currentReminders) {
+            hiddenRecoveryReminders.formIntersection(currentReminders)
+            UserDefaults.standard.set(Array(hiddenRecoveryReminders), forKey: "aircard.hiddenRecoveryReminders")
         }
         isScanningCards = overview["scanning"] as? Bool ?? isScanningCards
     }
@@ -329,8 +336,37 @@ final class AppViewModel: ObservableObject {
                 _ = try await bridge.request("recovery.resume", ["operationId": item.id])
                 await refresh()
                 statusText = t("恢复完成。", "Recovery completed.")
-            } catch { await refresh(); report(error) }
+            } catch {
+                await refresh()
+                let code = (error as? SwiftDesktopBridge.BridgeError)?.errorDescription ?? error.localizedDescription
+                if unresolved.contains(where: { $0.id == item.id }) && code == "RECOVERY_INDETERMINATE" {
+                    errorMessage = t("再次检查仍无法确认原文件位置。可隐藏提醒；恢复资料和此卡的隔离状态会保留。",
+                                     "The original file is still unverified. You can hide the reminder; recovery data and the card's isolation remain.")
+                    statusText = errorMessage ?? ""
+                    log(statusText)
+                } else {
+                    report(error)
+                }
+            }
         }
+    }
+
+    var hiddenRecoveryReminderCount: Int {
+        unresolved.filter { hiddenRecoveryReminders.contains($0.id) }.count
+    }
+
+    func hideRecoveryReminder(_ item: RecoveryItem) {
+        guard unresolved.contains(where: { $0.id == item.id }) else { return }
+        hiddenRecoveryReminders.insert(item.id)
+        UserDefaults.standard.set(Array(hiddenRecoveryReminders), forKey: "aircard.hiddenRecoveryReminders")
+        statusText = t("已隐藏提醒；恢复资料和此卡的隔离状态仍保留。",
+                       "Reminder hidden; recovery data and the card's isolation remain.")
+        log(statusText)
+    }
+
+    func showHiddenRecoveryReminders() {
+        hiddenRecoveryReminders.removeAll()
+        UserDefaults.standard.removeObject(forKey: "aircard.hiddenRecoveryReminders")
     }
 
     func isolateRecovery(_ item: RecoveryItem) {

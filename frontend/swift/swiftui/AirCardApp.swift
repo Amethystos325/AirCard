@@ -998,7 +998,7 @@ struct ContentView: View {
                     recoveryBanner(recovery)
                     Divider()
                 }
-                ForEach(vm.unresolved) { recovery in
+                ForEach(vm.unresolved.filter { !vm.hiddenRecoveryReminders.contains($0.id) }) { recovery in
                     unresolvedBanner(recovery)
                     Divider()
                 }
@@ -1255,6 +1255,17 @@ struct ContentView: View {
                 .pickerStyle(.inline)
                 .labelsHidden()
             }
+            if vm.hiddenRecoveryReminderCount > 0 {
+                Section(vm.t("恢复提醒", "Recovery reminders")) {
+                    Button {
+                        vm.showHiddenRecoveryReminders()
+                    } label: {
+                        Label(vm.t("显示已隐藏的提醒（\(vm.hiddenRecoveryReminderCount)）",
+                                   "Show hidden reminders (\(vm.hiddenRecoveryReminderCount))"),
+                              systemImage: "exclamationmark.shield")
+                    }
+                }
+            }
         } label: {
             Label(vm.t("设置", "Settings"), systemImage: "gearshape")
         }
@@ -1328,6 +1339,9 @@ struct ContentView: View {
             Spacer()
             Button(vm.t("重新检查", "Check again")) { vm.resumeRecovery(item) }
                 .disabled(vm.isFlashing || vm.device?.key != item.deviceKey)
+            Button(vm.t("隐藏提醒", "Hide reminder")) { vm.hideRecoveryReminder(item) }
+                .help(vm.t("仅隐藏此提醒；恢复资料和此卡的隔离状态会保留。",
+                           "Only hides this reminder; recovery data and the card's isolation remain."))
         }
         .padding(.horizontal, 20).padding(.vertical, 8)
         .background(Color.orange.opacity(0.1))
