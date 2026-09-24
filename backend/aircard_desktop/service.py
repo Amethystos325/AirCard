@@ -9,8 +9,19 @@ from collections import OrderedDict
 from backend.aircard import CARD_REGEXES
 from backend.windows_probe import select_device, trace_frame, trace_text
 from .engine import Engine
+from .storage import identity, read
 from .transport import device_info
 from .worker import SCANNED_CARD
+
+
+def card_candidates(message):
+    lower = message.lower()
+    if not any(word in lower for word in ("passd", "passbook", "passkit", "stockholm", "nanopassd", "wallet", "/cards/")):
+        return []
+    if not any(word in lower for word in ("card", "pass", "payment", "uniqueid", "identifier", "face", "cache", "stockholm")):
+        return []
+    return list(dict.fromkeys(match.group(1) for regex in CARD_REGEXES for match in regex.finditer(message)
+                              if SCANNED_CARD.fullmatch(match.group(1))))
 
 
 class Server:
@@ -43,32 +54,33 @@ class Server:
                         text = trace_text(packet) if kind == 2 else None
                         if not text:
                             continue
-                        for regex in CARD_REGEXES:
-                            for match in regex.finditer(text):
-                                if self.scan_stopping:
+                        for card in card_candidates(text):
+                            if self.scan_stopping:
+                                return
+                            if card in seen:
+                                continue
+                            seen.add(card)
+                            if self.engine.store.quarantined_card(device, card):
+                                continue
+                            self.event({"event": "candidate", "card": card})
+                            stored = read(self.engine.store.card(device, card) / "card.json", {})
+                            if (isinstance(stored, dict) and stored.get("card") == card
+                                    and stored.get("deviceKey") == identity(device)
+                                    and stored.get("kind") == "secure-element"):
+                                continue
+                            # Classification uses the same lock and durable restore as reads.
+                            try:
+                                if self.engine.lock.locked():
+                                    seen.discard(card)
+                                    continue
+                                await self.engine.operate(device, card, "classify")
+                            except Exception as error:
+                                if error_code(error) == "BUSY":
+                                    seen.discard(card)
+                                self.event({"event": "scanError", "code": error_code(error)})
+                                if self.engine.store.pending(device):
+                                    self.scan_stopping = True
                                     return
-                                card = match.group(1)
-                                if not SCANNED_CARD.fullmatch(card):
-                                    continue
-                                if card in seen:
-                                    continue
-                                seen.add(card)
-                                if self.engine.store.quarantined_card(device, card):
-                                    continue
-                                self.event({"event": "candidate", "card": card})
-                                # Classification uses the same lock and durable restore as reads.
-                                try:
-                                    if self.engine.lock.locked():
-                                        seen.discard(card)
-                                        continue
-                                    await self.engine.operate(device, card, "classify")
-                                except Exception as error:
-                                    if error_code(error) == "BUSY":
-                                        seen.discard(card)
-                                    self.event({"event": "scanError", "code": error_code(error)})
-                                    if self.engine.store.pending(device):
-                                        self.scan_stopping = True
-                                        return
         except asyncio.CancelledError:
             pass
         except Exception as error:

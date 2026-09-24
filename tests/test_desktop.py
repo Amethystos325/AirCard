@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock, patch
 from PIL import Image
 from backend.aircard_desktop.engine import Engine
 from backend.aircard_desktop.storage import Store, read, save, put, identity
-from backend.aircard_desktop.service import Server
+from backend.aircard_desktop.service import Server, card_candidates
 from backend.aircard_desktop.worker import validate, target, ART, CACHE, SCANNED_CARD
 from backend.aircard_desktop.images import prepare
-from backend.aircard_desktop.transport import Session, native
+from backend.aircard_desktop.transport import Session, native, wait_for_transfer
 
 CARD = 'A' * 27 + '='
 
@@ -27,11 +27,14 @@ class MemorySession:
     files = {}
     fail = False
     writes = []
+    reads = []
     finished = 0
     def __init__(self, store, state): self.state = state
     async def __aenter__(self): return self
     async def __aexit__(self, *args): pass
-    async def read(self, area, leaf): return self.files.get((area, leaf))
+    async def read(self, area, leaf):
+        self.reads.append((area, leaf))
+        return self.files.get((area, leaf))
     async def write(self, area, leaf, data):
         self.writes.append((area, leaf, data))
         if data is None: self.files.pop((area, leaf), None)
@@ -53,7 +56,7 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
         MemorySession.files = {('pkpass', 'pass.json'): json.dumps({'paymentCard': {}, 'organizationName': 'Test Suica'}).encode(),
                                ('pkpass', 'cardBackgroundCombined@3x.png'): png(),
                                ('cache', 'FrontFace'): b'original-cache'}
-        MemorySession.fail, MemorySession.writes, MemorySession.finished = False, [], 0
+        MemorySession.fail, MemorySession.writes, MemorySession.reads, MemorySession.finished = False, [], [], 0
 
     async def classify(self):
         await self.engine.operate('device-a', CARD, 'classify')
@@ -71,6 +74,35 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(MemorySession.files[('pkpass', 'cardBackgroundCombined@3x.png')], original[('pkpass', 'cardBackgroundCombined@3x.png')])
         self.assertNotIn(('pkpass', 'cardBackgroundCombined@2x.png'), MemorySession.files)
         self.assertFalse(self.store.pending())
+
+    async def test_read_reuses_verified_classification(self):
+        await self.classify()
+        self.assertEqual(MemorySession.reads.count(('pkpass', 'pass.json')), 1)
+        await self.engine.operate('device-a', CARD, 'read')
+        self.assertEqual(MemorySession.reads.count(('pkpass', 'pass.json')), 1)
+        saved = read(self.store.card('device-a', CARD) / 'card.json')
+        self.assertEqual(saved['label'], 'Test Suica')
+        self.assertTrue((self.store.card('device-a', CARD) / 'original/manifest.json').exists())
+
+    async def test_failed_preflight_does_not_block_future_reads(self):
+        class FailedPreflight(MemorySession):
+            async def __aenter__(self): raise RuntimeError('SYNC_FAILED')
+        self.engine.session_type = FailedPreflight
+        with self.assertRaisesRegex(RuntimeError, 'SYNC_FAILED'):
+            await self.engine.operate('device-a', CARD, 'classify')
+        self.assertFalse(self.store.pending('device-a'))
+        self.assertEqual(self.store.transactions()[0]['status'], 'rolled_back')
+        self.engine.session_type = MemorySession
+        await self.classify()
+
+    async def test_transfer_waits_for_late_afc_visibility(self):
+        afc = AsyncMock()
+        afc.exists.side_effect = [False, False, True]
+        self.assertTrue(await wait_for_transfer(afc, 'recovered', True, asyncio.Event(), timeout=.5))
+        missing = asyncio.Event(); missing.set()
+        afc.exists.side_effect = [False]
+        self.assertFalse(await wait_for_transfer(afc, 'recovered', True, missing, timeout=.5))
+        self.assertEqual(afc.exists.await_count, 4)
 
     async def test_partial_write_rolls_back_all_originals(self):
         await self.classify(); before = MemorySession.files.copy()
@@ -221,6 +253,10 @@ class DesktopTests(unittest.IsolatedAsyncioTestCase):
     def test_scanner_rejects_its_own_probe_paths(self):
         self.assertTrue(SCANNED_CARD.fullmatch(CARD))
         self.assertFalse(SCANNED_CARD.fullmatch('aircard-export-probe-b379e736c430'))
+
+    def test_scanner_requires_wallet_context_for_hash_only_matches(self):
+        self.assertEqual(card_candidates('unrelated token ' + CARD), [])
+        self.assertEqual(card_candidates('Wallet resource /Cards/' + CARD + '.pkpass/pass.json'), [CARD])
 
     def test_recovery_worker_accepts_only_the_pending_asset(self):
         token = 'a' * 32

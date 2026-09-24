@@ -68,6 +68,21 @@ async def native(job, directory):
     return result
 
 
+async def wait_for_transfer(afc, path, expected_exists, missing=None, timeout=3):
+    """Wait only while AFC and the device trace have not settled on a result."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        if await afc.exists(path) == expected_exists:
+            return True
+        if missing is not None and missing.is_set():
+            return False
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(.1, remaining))
+
+
 class Session:
     def __init__(self, store, state):
         self.store, self.state = store, state
@@ -81,6 +96,7 @@ class Session:
     async def __aenter__(self):
         from pymobiledevice3.services.afc import AfcService
         self.client = await select_device(self.state["device"])
+        self.afc = None
         try:
             values = self.client.all_values
             if (str(values.get("ProductVersion")), str(values.get("BuildVersion"))) not in BUILDS:
@@ -105,12 +121,18 @@ class Session:
             await native(self.job(checkSync=True), self.directory)
             return self
         except BaseException:
-            await self.client.close()
+            try:
+                if self.afc is not None:
+                    await self.afc.__aexit__(None, None, None)
+            finally:
+                await self.client.close()
             raise
 
     async def __aexit__(self, *args):
-        await self.afc.__aexit__(*args)
-        await self.client.close()
+        try:
+            await self.afc.__aexit__(*args)
+        finally:
+            await self.client.close()
 
     def job(self, **extra):
         return {"udid": self.state["device"], "runtime": str(self.runtime) if self.runtime else None, **extra}
@@ -145,7 +167,7 @@ class Session:
         if direction == "pull":
             self.journal["pending"] = {"area": area, "leaf": leaf, "recovered": recovered}
             self.checkpoint()
-        missing = False
+        missing = asyncio.Event()
         async with await self.client.start_lockdown_service("com.apple.os_trace_relay") as log:
             await log.send_plist({"Request": "StartActivity", "Pid": 0xffffffff, "MessageFilter": 0xffff,
                                   "StreamFlags": 0x3c}, fmt=plistlib.FMT_BINARY)
@@ -154,18 +176,21 @@ class Session:
                 raise RuntimeError("TRACE_FAILED")
 
             async def watch():
-                nonlocal missing
                 while True:
                     kind, packet = await trace_frame(log)
                     message = trace_text(packet) if kind == 2 else None
-                    if message and message.startswith("/usr/libexec/atc ") and "asset not found in airlock" in message and pairs[1][0] in message:
-                        missing = True
+                    if message and "asset not found in airlock" in message.lower() and pairs[1][0] in message:
+                        missing.set()
 
             listener = asyncio.create_task(watch())
             try:
                 await native(self.job(card=self.state["card"], area=area, leaf=leaf, token=token,
                                       direction=direction, assets=pairs), self.directory)
-                await asyncio.sleep(.25)
+                # Native sync completion can precede AFC visibility or the
+                # matching device-log message. Successful transfers return as
+                # soon as their result appears; only uncertain ones wait.
+                await wait_for_transfer(self.afc, source + "/payload" if direction == "push" else recovered,
+                                        direction == "pull", missing if direction == "pull" else None)
             finally:
                 listener.cancel()
                 try:
@@ -178,7 +203,7 @@ class Session:
             return None
         if await self.afc.exists(recovered):
             return await bounded_file(self.afc, recovered, 32 * 1024 * 1024)
-        if missing:
+        if missing.is_set():
             self.journal["pending"] = None
             self.checkpoint()
             return None

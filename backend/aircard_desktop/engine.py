@@ -7,7 +7,7 @@ import secrets
 import zipfile
 from pathlib import Path
 
-from backend.card_assets import build_card_assets, PNG_ASSET_NAMES
+from backend.card_assets import build_card_assets, PNG_ASSET_NAMES, PDF_ASSET_NAME
 from backend.card_export import classify_pass_data
 from .storage import Store, save, read, identity, put
 from .transport import Session, device_info
@@ -108,15 +108,24 @@ class Engine:
                     async with self.session_type(self.store, state) as session:
                         try:
                             self.progress("classifying")
-                            pass_data = await session.read("pkpass", "pass.json")
-                            kind = classify_pass_data(pass_data) if pass_data else "unknown"
+                            # A card classified during scanning already has a
+                            # device-bound record. Reading its artwork need not
+                            # move pass.json off the phone a second time.
+                            reuse_classification = (mode == "read" and known.get("card") == card
+                                                    and known.get("deviceKey") == state["deviceKey"]
+                                                    and known.get("kind") == "secure-element")
+                            pass_data = None if reuse_classification else await session.read("pkpass", "pass.json")
+                            kind = "secure-element" if reuse_classification else (
+                                classify_pass_data(pass_data) if pass_data else "unknown")
                             if kind != "secure-element" and mode != "classify":
                                 raise RuntimeError("CARD_NOT_CLASSIFIED")
                             meta = {"card": card, "deviceKey": state["deviceKey"], "kind": kind,
-                                    "label": self.card_label(pass_data)}
+                                    "label": known.get("label", "") if reuse_classification else self.card_label(pass_data)}
                             if mode != "classify":
                                 self.progress("backingUp")
-                                names = [("pkpass", name) for name in sorted(ART)]
+                                # Keep the common high-resolution face first so
+                                # its durable copy exists before probing variants.
+                                names = [("pkpass", name) for name in (*PNG_ASSET_NAMES, PDF_ASSET_NAME)]
                                 if desired is not None:
                                     names += [(area, leaf) for area in ("cache", "pkcache") for leaf in sorted(CACHE)]
                                 for area, name in names:
@@ -169,7 +178,13 @@ class Engine:
                             raise
                 except BaseException:
                     if state["status"] == "running":
-                        state["status"] = "needs_recovery"
+                        journal = read(transaction / "transport" / "journal.json", {})
+                        # Connection, compatibility and sync-readiness errors
+                        # can happen before any device file is moved. They do
+                        # not require a recovery transaction.
+                        state["status"] = ("rolled_back" if not state["writeStarted"]
+                                           and not journal.get("roots") and not journal.get("pending")
+                                           else "needs_recovery")
                     raise
                 finally:
                     self.store.checkpoint(state)
