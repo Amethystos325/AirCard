@@ -390,106 +390,194 @@ private final class CenteredArtworkClipView: NSClipView {
 }
 
 private final class ArtworkScrollView: NSScrollView {
-    var onZoomChange: ((CGFloat) -> Void)?
-    private var hasFitted = false
+    static let maxZoom: CGFloat = 8
+    static let zoomStep: CGFloat = 1.25
+
+    var onZoomChange: ((_ zoom: CGFloat, _ range: ClosedRange<CGFloat>, _ isFitted: Bool) -> Void)?
+    private var isFitted = true
+    private var fittedSize: NSSize = .zero
+    private var panAnchor: NSPoint?
+
+    private var fitZoom: CGFloat {
+        guard let size = documentView?.frame.size, size.width > 0, size.height > 0 else { return 1 }
+        // The clip view's frame is unaffected by magnification, unlike its bounds.
+        let visible = contentView.frame.size
+        return min(visible.width / size.width, visible.height / size.height)
+    }
+
+    private var canPan: Bool {
+        guard let size = documentView?.frame.size else { return false }
+        return size.width * magnification > contentView.frame.width + 0.5
+            || size.height * magnification > contentView.frame.height + 0.5
+    }
+
+    func installGestures() {
+        addGestureRecognizer(NSPanGestureRecognizer(target: self, action: #selector(handlePan(_:))))
+        let doubleClick = NSClickGestureRecognizer(target: self, action: #selector(handleDoubleClick(_:)))
+        doubleClick.numberOfClicksRequired = 2
+        addGestureRecognizer(doubleClick)
+    }
 
     override func layout() {
         super.layout()
-        if !hasFitted, contentView.bounds.width > 0, contentView.bounds.height > 0 {
+        let size = contentView.frame.size
+        guard size.width > 0, size.height > 0, size != fittedSize else { return }
+        fittedSize = size
+        minMagnification = min(fitZoom, 1)
+        maxMagnification = max(Self.maxZoom, fitZoom)
+        // Keep a fitted image fitted while the sheet resizes; otherwise just re-clamp.
+        if isFitted { fitArtwork() } else { setArtworkZoom(magnification) }
+    }
+
+    func fitArtwork() {
+        setMagnification(fitZoom, centeredAt: NSPoint(x: contentView.bounds.midX, y: contentView.bounds.midY))
+        notifyZoomChange()
+    }
+
+    /// `point` is in clip-view (document) coordinates and stays fixed on screen.
+    func setArtworkZoom(_ value: CGFloat, at point: NSPoint? = nil) {
+        let clamped = min(max(value, minMagnification), maxMagnification)
+        setMagnification(clamped, centeredAt: point ?? NSPoint(x: contentView.bounds.midX, y: contentView.bounds.midY))
+        notifyZoomChange()
+    }
+
+    func zoom(by factor: CGFloat, at point: NSPoint? = nil) {
+        setArtworkZoom(magnification * factor, at: point)
+    }
+
+    private func toggleZoom(at point: NSPoint) {
+        if isFitted {
+            let fit = fitZoom
+            setArtworkZoom(fit < 1 ? 1 : fit * 2, at: point)
+        } else {
             fitArtwork()
         }
     }
 
-    func fitArtwork() {
-        guard let documentView, contentView.bounds.width > 0,
-              contentView.bounds.height > 0 else { return }
-        hasFitted = true
-        let fit = min(contentView.bounds.width / max(documentView.frame.width, 1),
-                      contentView.bounds.height / max(documentView.frame.height, 1))
-        setArtworkZoom(min(max(fit, minMagnification), maxMagnification))
-    }
-
-    func setArtworkZoom(_ value: CGFloat) {
-        let center = NSPoint(x: contentView.bounds.midX, y: contentView.bounds.midY)
-        setMagnification(min(max(value, minMagnification), maxMagnification), centeredAt: center)
-        onZoomChange?(magnification)
+    private func notifyZoomChange() {
+        isFitted = abs(magnification - fitZoom) < 0.005
+        documentCursor = canPan ? .openHand : nil
+        onZoomChange?(magnification, minMagnification...maxMagnification, isFitted)
     }
 
     override func scrollWheel(with event: NSEvent) {
-        let delta = min(abs(event.scrollingDeltaY), 10)
-        guard delta > 0 else { return }
-        let factor = pow(CGFloat(1.015), CGFloat(delta))
-        setArtworkZoom(magnification * (event.scrollingDeltaY < 0 ? factor : 1 / factor))
+        // Two-finger trackpad scrolling pans like every other macOS scroll view, so it
+        // follows the system's natural-scrolling setting. A mouse wheel or ⌘-scroll zooms.
+        guard !event.hasPreciseScrollingDeltas || event.modifierFlags.contains(.command) else {
+            super.scrollWheel(with: event)
+            return
+        }
+        let delta = event.scrollingDeltaY
+        guard delta != 0 else { return }
+        let step = event.hasPreciseScrollingDeltas ? min(abs(delta), 30) * 0.006 : min(abs(delta), 4) * 0.1
+        // Scrolling up zooms in, as in Maps and in browsers.
+        zoom(by: delta > 0 ? 1 + step : 1 / (1 + step),
+             at: contentView.convert(event.locationInWindow, from: nil))
     }
+
+    override func magnify(with event: NSEvent) {
+        super.magnify(with: event)
+        notifyZoomChange()
+    }
+
+    override func smartMagnify(with event: NSEvent) {
+        toggleZoom(at: contentView.convert(event.locationInWindow, from: nil))
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags.contains(.command), flags.isDisjoint(with: [.control, .option]) else {
+            return super.performKeyEquivalent(with: event)
+        }
+        switch event.charactersIgnoringModifiers {
+        case "=", "+": zoom(by: Self.zoomStep)
+        case "-": zoom(by: 1 / Self.zoomStep)
+        case "0": setArtworkZoom(1)
+        case "9": fitArtwork()
+        default: return super.performKeyEquivalent(with: event)
+        }
+        return true
+    }
+
+    @objc private func handlePan(_ gesture: NSPanGestureRecognizer) {
+        // Keep the document point grabbed on mouse-down under the pointer. Working in
+        // clip-view coordinates avoids mixing the flipped scroll view with the unflipped
+        // clip view, which used to invert vertical dragging.
+        let point = contentView.convert(gesture.location(in: nil), from: nil)
+        switch gesture.state {
+        case .began:
+            panAnchor = point
+            NSCursor.closedHand.push()
+        case .changed:
+            guard let anchor = panAnchor else { return }
+            var bounds = contentView.bounds
+            bounds.origin.x += anchor.x - point.x
+            bounds.origin.y += anchor.y - point.y
+            contentView.scroll(to: contentView.constrainBoundsRect(bounds).origin)
+            reflectScrolledClipView(contentView)
+        default:
+            if panAnchor != nil { NSCursor.pop() }
+            panAnchor = nil
+        }
+    }
+
+    @objc private func handleDoubleClick(_ gesture: NSClickGestureRecognizer) {
+        toggleZoom(at: contentView.convert(gesture.location(in: nil), from: nil))
+    }
+}
+
+@MainActor
+private final class ArtworkZoomController: ObservableObject {
+    @Published private(set) var zoom: CGFloat = 1
+    @Published private(set) var range: ClosedRange<CGFloat> = 1...ArtworkScrollView.maxZoom
+    @Published private(set) var isFitted = true
+    weak var scrollView: ArtworkScrollView?
+
+    var canZoomIn: Bool { zoom < range.upperBound - 0.001 }
+    var canZoomOut: Bool { zoom > range.lowerBound + 0.001 }
+
+    func update(zoom: CGFloat, range: ClosedRange<CGFloat>, isFitted: Bool) {
+        self.zoom = zoom
+        self.range = range
+        self.isFitted = isFitted
+    }
+
+    func zoomIn() { scrollView?.zoom(by: ArtworkScrollView.zoomStep) }
+    func zoomOut() { scrollView?.zoom(by: 1 / ArtworkScrollView.zoomStep) }
+    func zoom(to value: CGFloat) { scrollView?.setArtworkZoom(value) }
+    func fit() { scrollView?.fitArtwork() }
 }
 
 private struct ZoomableArtworkCanvas: NSViewRepresentable {
     let image: NSImage
-    @Binding var zoom: CGFloat
-    let fitRequest: Int
-
-    final class Coordinator: NSObject {
-        var zoom: Binding<CGFloat>
-        var fitRequest = 0
-        weak var scrollView: ArtworkScrollView?
-
-        init(zoom: Binding<CGFloat>) {
-            self.zoom = zoom
-        }
-
-        @objc func pan(_ gesture: NSPanGestureRecognizer) {
-            guard let scrollView else { return }
-            let translation = gesture.translation(in: scrollView)
-            let clip = scrollView.contentView
-            let origin = clip.bounds.origin
-            clip.scroll(to: NSPoint(x: origin.x - translation.x / scrollView.magnification,
-                                    y: origin.y - translation.y / scrollView.magnification))
-            scrollView.reflectScrolledClipView(clip)
-            gesture.setTranslation(.zero, in: scrollView)
-            if gesture.state == .began || gesture.state == .changed {
-                NSCursor.closedHand.set()
-            } else if gesture.state == .ended || gesture.state == .cancelled {
-                NSCursor.openHand.set()
-            }
-        }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(zoom: $zoom) }
+    let controller: ArtworkZoomController
 
     func makeNSView(context: Context) -> ArtworkScrollView {
         let scrollView = ArtworkScrollView()
         scrollView.contentView = CenteredArtworkClipView()
         scrollView.drawsBackground = true
-        scrollView.backgroundColor = NSColor(calibratedWhite: 0.10, alpha: 1)
-        scrollView.hasHorizontalScroller = false
-        scrollView.hasVerticalScroller = false
+        scrollView.backgroundColor = .underPageBackgroundColor
+        scrollView.hasHorizontalScroller = true
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
         scrollView.allowsMagnification = true
-        scrollView.minMagnification = 0.05
-        scrollView.maxMagnification = 5
 
-        let imageView = NSImageView(frame: NSRect(origin: .zero, size: image.size))
+        // Size by pixels so 100% means actual pixels regardless of the file's DPI metadata.
+        let pixels = image.representations.first { $0.pixelsWide > 0 }
+            .map { NSSize(width: $0.pixelsWide, height: $0.pixelsHigh) } ?? image.size
+        let imageView = NSImageView(frame: NSRect(origin: .zero, size: pixels))
         imageView.image = image
-        imageView.imageScaling = .scaleNone
-        imageView.imageAlignment = .alignCenter
-        imageView.addGestureRecognizer(NSPanGestureRecognizer(
-            target: context.coordinator, action: #selector(Coordinator.pan(_:))))
+        imageView.imageScaling = .scaleAxesIndependently
         scrollView.documentView = imageView
-        context.coordinator.scrollView = scrollView
-        scrollView.onZoomChange = { value in
-            DispatchQueue.main.async { context.coordinator.zoom.wrappedValue = value }
+        scrollView.installGestures()
+        scrollView.onZoomChange = { [weak controller] zoom, range, isFitted in
+            DispatchQueue.main.async { controller?.update(zoom: zoom, range: range, isFitted: isFitted) }
         }
+        controller.scrollView = scrollView
         return scrollView
     }
 
-    func updateNSView(_ scrollView: ArtworkScrollView, context: Context) {
-        context.coordinator.zoom = $zoom
-        if context.coordinator.fitRequest != fitRequest {
-            context.coordinator.fitRequest = fitRequest
-            scrollView.fitArtwork()
-        } else if abs(scrollView.magnification - zoom) > 0.01 {
-            scrollView.setArtworkZoom(zoom)
-        }
-    }
+    func updateNSView(_ scrollView: ArtworkScrollView, context: Context) {}
 }
 
 private struct CachedArtworkViewer: View {
@@ -497,74 +585,96 @@ private struct CachedArtworkViewer: View {
     @ObservedObject var vm: AppViewModel
     let exportBackup: () -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var zoom: CGFloat = 1
-    @State private var fitRequest = 0
+    @StateObject private var zoom = ArtworkZoomController()
 
-    private var image: NSImage? { item.image }
     private func t(_ zh: String, _ en: String) -> String { vm.t(zh, en) }
     private var backupAvailable: Bool {
         vm.cards.contains { $0.id == item.cardID && $0.deviceKey == item.deviceKey && $0.backup }
     }
+    private var pixelSize: String {
+        let rep = item.image.representations.first { $0.pixelsWide > 0 }
+        let width = rep?.pixelsWide ?? Int(item.image.size.width)
+        let height = rep?.pixelsHigh ?? Int(item.image.size.height)
+        return "\(width) × \(height)"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Image(systemName: "photo")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(t("素材预览", "Artwork preview")).font(.headline)
-                    Text(item.cardLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                if let url = item.url {
-                    Button(t("在访达中显示", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                }
-                Button(t("导出备份", "Export backup"), action: exportBackup)
-                    .disabled(!backupAvailable || vm.isExporting)
-                    .help(t("导出首次备份（ZIP）", "Export first backup (ZIP)"))
-                Button(t("关闭", "Close")) { dismiss() }
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
+            header
+                .padding(.horizontal, 16)
+                .frame(height: 52)
+                .background(.bar)
+            Divider()
+            ZoomableArtworkCanvas(image: item.image, controller: zoom)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(minWidth: 760, idealWidth: 960, minHeight: 560, idealHeight: 680)
+    }
 
-            if let image {
-                ZoomableArtworkCanvas(image: image, zoom: $zoom, fitRequest: fitRequest)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ContentUnavailableView(t("无法显示卡面", "Cannot display artwork"), systemImage: "photo",
-                                       description: Text(t("图片文件可能已移动或损坏。", "The image may have moved or become damaged.")))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-
-            HStack(spacing: 12) {
-                Text(t("滚轮缩放 · 拖动查看", "Scroll to zoom · drag to pan"))
+    private var header: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.cardLabel)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(t("卡面素材 · \(pixelSize) 像素", "Card artwork · \(pixelSize) px"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Spacer()
-                Button { zoom = max(0.05, zoom / 1.2) } label: {
-                    Image(systemName: "minus.magnifyingglass")
-                }
-                .help(t("缩小", "Zoom out"))
-                Slider(value: $zoom, in: 0.05...5)
-                    .frame(width: 180)
-                Button { zoom = min(5, zoom * 1.2) } label: {
-                    Image(systemName: "plus.magnifyingglass")
-                }
-                .help(t("放大", "Zoom in"))
-                Text("\(Int(zoom * 100))%")
-                    .monospacedDigit()
-                    .frame(width: 50, alignment: .trailing)
-                Button(t("适应窗口", "Fit window")) { fitRequest += 1 }
+                    .lineLimit(1)
             }
-            .buttonStyle(.bordered)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
+
+            Spacer(minLength: 16)
+
+            ControlGroup {
+                Button(action: zoom.zoomOut) {
+                    Label(t("缩小", "Zoom Out"), systemImage: "minus.magnifyingglass")
+                }
+                .disabled(!zoom.canZoomOut)
+                .help(t("缩小（⌘−）", "Zoom Out (⌘−)"))
+                Button(action: zoom.zoomIn) {
+                    Label(t("放大", "Zoom In"), systemImage: "plus.magnifyingglass")
+                }
+                .disabled(!zoom.canZoomIn)
+                .help(t("放大（⌘+）", "Zoom In (⌘+)"))
+            }
+            .labelStyle(.iconOnly)
+            .fixedSize()
+
+            Menu {
+                Button(t("适应窗口（⌘9）", "Zoom to Fit (⌘9)"), action: zoom.fit)
+                    .disabled(zoom.isFitted)
+                Button(t("实际大小（⌘0）", "Actual Size (⌘0)")) { zoom.zoom(to: 1) }
+                Divider()
+                ForEach([0.5, 2, 4] as [CGFloat], id: \.self) { value in
+                    Button("\(Int(value * 100))%") { zoom.zoom(to: value) }
+                }
+            } label: {
+                Text("\(Int((zoom.zoom * 100).rounded()))%")
+                    .monospacedDigit()
+            }
+            .fixedSize()
+            .help(t("缩放比例。双指开合、滚轮或 ⌘ + 滚动缩放，拖动平移，双击切换适应窗口。",
+                    "Zoom level. Pinch, use the scroll wheel or ⌘-scroll to zoom, drag to pan, double-click to toggle fit."))
+
+            if let url = item.url {
+                Button { NSWorkspace.shared.activateFileViewerSelecting([url]) } label: {
+                    Label(t("在访达中显示", "Show in Finder"), systemImage: "folder")
+                }
+                .labelStyle(.iconOnly)
+                .help(t("在访达中显示", "Show in Finder"))
+            }
+
+            Button(action: exportBackup) {
+                Label(t("导出备份", "Export Backup"), systemImage: "square.and.arrow.up")
+            }
+            .disabled(!backupAvailable || vm.isExporting)
+            .help(t("导出首次备份（ZIP）", "Export first backup (ZIP)"))
+
+            Button(t("完成", "Done")) { dismiss() }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.cancelAction)
         }
-        .frame(minWidth: 900, minHeight: 650)
+        .controlSize(.regular)
     }
 }
 
