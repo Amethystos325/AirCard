@@ -87,10 +87,12 @@ final class SwiftDesktopBridge {
 
     private func received(_ bytes: Data) {
         if bytes.isEmpty { failed(); return }
-        output.append(bytes)
-        while let newline = output.firstIndex(of: 0x0a) {
-            let line = output.prefix(upTo: newline)
-            output.removeSubrange(...newline)
+        var start = bytes.startIndex
+        while let newline = bytes[start...].firstIndex(of: 0x0a) {
+            output.append(contentsOf: bytes[start..<newline])
+            let line = output
+            output = Data()
+            start = bytes.index(after: newline)
             guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
             if let id = object["id"] as? String, let continuation = pending.removeValue(forKey: id) {
                 if object["ok"] as? Bool == true {
@@ -103,6 +105,7 @@ final class SwiftDesktopBridge {
                 onEvent?(object)
             }
         }
+        output.append(contentsOf: bytes[start...])
     }
 
     private func failed() {
